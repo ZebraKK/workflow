@@ -1,33 +1,33 @@
 package step
 
-/*
-type mgrServicer interface {
-	CompletionHandler(wg *sync.WaitGroup, id string)
-	PostHook()
+type Actioner interface {
+	StepActor() error
+	DealAsyncResp(resp string) error
 }
-*/
 
 // 最小执行单元
 type Step struct {
 	Description string
 	ID          string
 	State       string // created, processing, done, failed, canceled, retry, async_waiting
+	IsAsync     bool
 
-	IsAsync       bool
-	StepActor     func() error // 统一的执行入口
-	DealAsyncResp func(resp string) error
-
-	//mgrService mgrServicer // 外部服务能力来设置回调
-
+	execute Actioner
 }
 
-func NewStep(description, id string, execute func() error) *Step {
+func NewStep(description string, actor Actioner) *Step {
+	if actor == nil {
+		return nil
+	}
 	return &Step{
 		Description: description,
-		ID:          id,
-		StepActor:   execute,
 		State:       "created",
+		execute:     actor,
 	}
+}
+
+func (s *Step) SetID(id string) {
+	s.ID = id
 }
 
 func (s *Step) Run() error {
@@ -46,9 +46,7 @@ func (s *Step) Run() error {
 	}()
 
 	s.State = "processing"
-	if s.StepActor != nil {
-		err = s.StepActor()
-	}
+	err = s.execute.StepActor()
 
 	return err
 }
@@ -64,10 +62,7 @@ func (s *Step) DealWithResp(resp string) {
 		}
 	}()
 
-	if s.DealAsyncResp != nil {
-		err = s.DealAsyncResp(resp)
-		return
-	}
+	err = s.execute.DealAsyncResp(resp)
 }
 
 func (s *Step) IsAsyncWaiting() bool {

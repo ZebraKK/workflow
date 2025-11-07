@@ -22,7 +22,7 @@ func (s *Scheduler) AddTask(t *Task) {
 
 func (s *Scheduler) RunAll() error {
 	for _, task := range s.Tasks {
-		if err := task.TaskRun(); err != nil {
+		if err := task.Run(); err != nil {
 			return err
 		}
 	}

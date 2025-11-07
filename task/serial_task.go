@@ -7,7 +7,7 @@ type SerialTask struct {
 
 }
 
-func (t *SerialTask) TaskRun() error {
+func (t *SerialTask) Run() error {
 
 	for index := t.CurrentStage; index < len(t.Steps); index++ {
 		step := t.Steps[index]
@@ -16,6 +16,7 @@ func (t *SerialTask) TaskRun() error {
 		if err != nil {
 			return err
 		}
+		// todo: 改进为是否继续, 有单独逻辑
 		if step.IsAsyncWaiting() {
 			t.CurrentStage = index
 			t.State = "async_waiting"
@@ -37,5 +38,17 @@ func (t *SerialTask) AsyncHandler(resp string) {
 
 	t.CurrentStage++
 	t.State = "processing"
-	t.TaskRun()
+	t.Run() // 返回池子？
+}
+
+func (t *SerialTask) RunNext() {
+	if t.CurrentStage >= len(t.Steps) {
+		t.State = "completed"
+		return
+	}
+
+	t.CurrentStage++
+	t.State = "processing"
+	t.Run()
+
 }
