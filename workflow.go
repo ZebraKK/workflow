@@ -105,3 +105,8 @@ func (w *Workflow) CallbackHandler(id string) {
 	task.UpdateAsyncResp(resp)
 	w.taskPools.PushAsyncCallback(task)
 }
+
+func (w *Workflow) Handler(t taskpool.Tasker) error {
+
+	return w.taskPools.PushTask(t)
+}
