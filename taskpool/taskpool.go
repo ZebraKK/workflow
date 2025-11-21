@@ -6,10 +6,10 @@ import (
 )
 
 type Tasker interface {
-	AsyncHandler(resp string)
-	TaskRun() error
+	Run() error
 	GetID() string
 	GetStatus() string
+	AsyncHandler(resp string)
 	UpdateAsyncResp(resp string) // 把resp 存到task里
 }
 

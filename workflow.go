@@ -72,7 +72,7 @@ func (w *Workflow) Close() {
 }
 
 func (w *Workflow) runTask(t taskpool.Tasker) {
-	t.TaskRun()
+	t.Run()
 	state := "" // t.GetState() // 获取任务状态
 	switch state {
 	case "async_waiting":
@@ -104,4 +104,9 @@ func (w *Workflow) CallbackHandler(id string) {
 	}
 	task.UpdateAsyncResp(resp)
 	w.taskPools.PushAsyncCallback(task)
+}
+
+func (w *Workflow) Handler(t taskpool.Tasker) error {
+
+	return w.taskPools.PushTask(t)
 }

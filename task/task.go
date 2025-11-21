@@ -21,8 +21,8 @@ const (
 type Task struct {
 	Name  string
 	ID    string
-	Ctx   string      // TODO:
-	Steps []step.Step // 数据结构TODO：优化
+	Ctx   string       // TODO:
+	Steps []*step.Step // 数据结构TODO：优化
 	State string
 }
 
@@ -30,7 +30,7 @@ func NewTask(name, id string) *Task {
 
 	task := &Task{
 		Name:  name,
-		Steps: make([]step.Step, 0),
+		Steps: make([]*step.Step, 0),
 		State: "created",
 	}
 	if id != "" {
@@ -42,7 +42,7 @@ func NewTask(name, id string) *Task {
 	return task
 }
 
-func (t *Task) AddStep(s step.Step) {
+func (t *Task) AddStep(s *step.Step) {
 	indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
 	// 串行, 并行的ID 生成规则不一样 todo
 
@@ -61,6 +61,13 @@ func (t *Task) GetStatus() string {
 
 func (t *Task) GetName() string {
 	return t.Name
+}
+
+func (t *Task) GetID() string {
+	return t.ID
+}
+
+func (t *Task) UpdateAsyncResp(resp string) {
 }
 
 /*
