@@ -9,9 +9,9 @@ import (
 
 type ParallelTask struct {
 	Task
-	stepsMap map[string]step.Step // key: stepIndex
+	stepsMap map[string]*step.Step // key: stepIndex
 
-	asyncSteps map[string]step.Step // key: stepIndex 标记为异步的step 方便异步的检查
+	asyncSteps map[string]*step.Step // key: stepIndex 标记为异步的step 方便异步的检查
 }
 
 func (t *ParallelTask) Run() error {
@@ -27,7 +27,7 @@ func (t *ParallelTask) Run() error {
 		if s.IsAsync {
 			t.asyncSteps[s.ID] = s
 		}
-		go func(s step.Step) {
+		go func(s *step.Step) {
 			defer wg.Done()
 
 			var tErr error
@@ -65,7 +65,7 @@ func (t *ParallelTask) Run() error {
 	return err
 }
 
-func (t *ParallelTask) worker(s step.Step) <-chan error {
+func (t *ParallelTask) worker(s *step.Step) <-chan error {
 	done := make(chan error, 1)
 	// task 时长 TODO
 	done <- s.Run()
