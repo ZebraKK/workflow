@@ -25,6 +25,7 @@ func (t *ParallelTask) Run() error {
 		wg.Add(1)
 		s := st
 		if s.IsAsync {
+			// 并发写入，需要封装函数
 			t.asyncSteps[s.ID] = s
 		}
 		go func(s *step.Step) {

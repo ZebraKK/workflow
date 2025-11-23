@@ -64,13 +64,6 @@ func (w *Workflow) start() {
 	}()
 }
 
-func (w *Workflow) Close() {
-	// 中断正在运行的任务
-	// 释放资源
-	// 关闭channel
-	// 其他清理等
-}
-
 func (w *Workflow) runTask(t taskpool.Tasker) {
 	t.Run()
 	state := "" // t.GetState() // 获取任务状态
@@ -106,7 +99,67 @@ func (w *Workflow) CallbackHandler(id string) {
 	w.taskPools.PushAsyncCallback(task)
 }
 
-func (w *Workflow) Handler(t taskpool.Tasker) error {
 
-	return w.taskPools.PushTask(t)
+
+func (w *Workflow) Close() {
+	// 中断正在运行的任务
+	// 释放资源
+	// 关闭channel
+	// 其他清理等
 }
+
+
+/*
+	定义
+	workflow
+		调度管理平台
+	pipeline
+		workflow 调度运行的对象
+		必须包含一个task 对象
+	task
+		task 和pipeline 有重叠的理解
+		task 可以是task再嵌套
+		包括并行任务，串行任务
+
+	job
+		workflow运行一个pipeline，即一次job的执行
+
+
+
+	workflow调度
+		服务自管理
+		无状态，支持水平扩展
+		负载情况，（统计，max， running， total）
+
+	workflow管理 
+		接口交互
+		pipeline, 代表一个任务序列
+			执行一次，有一次job description
+
+
+
+
+
+	接口: pipeline
+		新建
+		运行
+		修改
+		查询
+		clone
+		trigger （context ）
+
+		重试
+		终止
+		跳过
+		回滚 // 
+
+
+	--------------------------------------------
+	任务
+		串行
+		并行
+		cron
+		on demand
+		任务通知（pre，post）
+
+*/

@@ -9,5 +9,5 @@ func main() {
 	wf := workflow.NewWorkflow(store)
 
 	mytask := NewMyTask()
-	wf.Handler(mytask)
+	wf.CreatePipeline(mytask)
 }
