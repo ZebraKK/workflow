@@ -10,11 +10,11 @@ import (
 type TaskState int
 
 const (
-	tCreated TaskState = iota
-	tProcessing
-	tSuccess
-	tFailed
-	tRetry
+    tCreated TaskState = iota
+    tProcessing
+    tSuccess
+    tFailed
+    tRetry
 )
 */
 
@@ -71,52 +71,52 @@ func (t *Task) UpdateAsyncResp(resp string) {
 }
 
 /*
-	func (t *Task) SetStatus(newState TaskState) error {
-		t.mu.Lock()
-		defer t.mu.Unlock()
+   func (t *Task) SetStatus(newState TaskState) error {
+       t.mu.Lock()
+       defer t.mu.Unlock()
 
-		switch t.State {
-		case tCreated:
-			if newState == tProcessing {
-				t.State = tProcessing
-				return nil
-			}
-		case tProcessing:
-			switch newState {
-			case tSuccess:
-				t.State = tSuccess
-				return nil
-			case tFailed:
-				t.State = tFailed
-				return nil
-			}
-		case tFailed:
-			if newState == tRetry {
-				t.State = tRetry
-				return nil
-			}
-		case tRetry:
-			if newState == tProcessing {
-				t.State = tProcessing
-				return nil
-			}
-		}
+       switch t.State {
+       case tCreated:
+           if newState == tProcessing {
+               t.State = tProcessing
+               return nil
+           }
+       case tProcessing:
+           switch newState {
+           case tSuccess:
+               t.State = tSuccess
+               return nil
+           case tFailed:
+               t.State = tFailed
+               return nil
+           }
+       case tFailed:
+           if newState == tRetry {
+               t.State = tRetry
+               return nil
+           }
+       case tRetry:
+           if newState == tProcessing {
+               t.State = tProcessing
+               return nil
+           }
+       }
 
-		return nil
-	}
+       return nil
+   }
 */
 /*
 func (t *Task) decodeID(id string) (string, string) {
-	return "stage-index", "step-index"
+    return "stage-index", "step-index"
 }
 
 // id: task-stageindex-stepindex
 func (t *Task) SetStepCompleted(id string) {
-	gindex, sindex := t.decodeID(id)
-	step, ok := t.stepsMap[gindex][sindex]
-	if !ok {
-		return
-	}
-	step.SetCompleted()
+    gindex, sindex := t.decodeID(id)
+    step, ok := t.stepsMap[gindex][sindex]
+    if !ok {
+        return
+    }
+    step.SetCompleted()
 }
 */

@@ -21,8 +21,8 @@ type TaskStorer interface {
 
 type TaskPool struct {
 	/*---------------
-		存储可以替换 为db/redis/mq等
-	  ---------------*/
+	  存储可以替换 为db/redis/mq等
+	---------------*/
 	TaskStore map[string]Tasker
 	mu        sync.RWMutex
 	/*----------------

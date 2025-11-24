@@ -1,67 +1,136 @@
 package workflow
 
 import (
-	"time"
+	"sync"
 
 	"workflow/taskpool"
 )
 
 type Workflow struct {
-	taskPools *taskpool.TaskPool
+	taskPools *taskpool.TaskPool // 罗列 存储pipeline
+
+	pipelineMap map[string]*Pipeline // 管理pipeline
+	muPl        sync.RWMutex
+	jobsStore   map[string]*Job // 每次运行一个pipeline 会生成一个job。 存储
+	muJs        sync.RWMutex
+
+	workerNum int
+	JobCh     chan *Job //缓冲大小 = 峰值写入 QPS * 平均处理耗时（如峰值 1000 QPS,处理耗时 10ms,缓冲设为1000*0.01=10）；
+	quitJobCh chan struct{}
+	AsyncCh   chan *Job
 }
 
 func NewWorkflow(store taskpool.TaskStorer) *Workflow {
 	wf := &Workflow{
-		taskPools: taskpool.NewTaskPool(store, 100),
+		taskPools:   taskpool.NewTaskPool(store, 100),
+		pipelineMap: make(map[string]*Pipeline),
+		jobsStore:   make(map[string]*Job),
+		workerNum:   5, // todo 配置化 or cpu*2
+		quitJobCh:   make(chan struct{}, 1),
+		JobCh:       make(chan *Job, 10),
+		AsyncCh:     make(chan *Job, 10),
 	}
-	wf.start()
+
+	// load existing pipelines from store if needed
+	//wf.pipelineMap = map[string]*Pipeline{}
+
+	go wf.jobStart()
 
 	return wf
 }
 
+/*
 func (w *Workflow) start() {
-	go func() {
-		for {
-			// 1 从任务channel取任务
-			task := w.taskPools.PickTask()
-			// 2 goroutine运行任务
-			if task == nil {
-				time.Sleep(30 * time.Second)
-				continue
-			} else {
-				go func() {
-					w.runTask(task)
-					if task.GetStatus() == "done" {
-						w.taskPools.DeleteStoreTask(task.GetID())
+    go func() {
+        for {
+            // 1 从任务channel取任务
+            task := w.taskPools.PickTask()
+            // 2 goroutine运行任务
+            if task == nil {
+                time.Sleep(30 * time.Second)
+                continue
+            } else {
+                go func() {
+                    w.runTask(task)
+                    if task.GetStatus() == "done" {
+                        w.taskPools.DeleteStoreTask(task.GetID())
+                    }
+                }()
+            }
+        }
+    }()
+
+    go func() {
+        // 监听回调channel
+        for {
+            task := w.taskPools.PickAsyncCallback()
+            resp := "" // 从外部获取response
+
+            if task == nil {
+                time.Sleep(10 * time.Second)
+                continue
+            } else {
+                go func() {
+                    task.AsyncHandler(resp) // todo ,resp被改写到task里了 // 执行拿到异步结果后的处理
+
+                    if task.GetStatus() == "not_done" {
+                        w.taskPools.PushTask(task)
+                    } else {
+                        w.taskPools.DeleteStoreTask(task.GetID())
+                    }
+                }()
+            }
+
+        }
+    }()
+}
+*/
+
+func (w *Workflow) jobStart() {
+	var wg sync.WaitGroup
+	for range w.workerNum {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case job, ok := <-w.JobCh:
+					if !ok {
+						// log
+						return
 					}
-				}()
+					defer func() {
+						if r := recover(); r != nil {
+							// log the panic
+						}
+					}()
+					w.runJob(job)
+				case <-w.quitJobCh:
+					// log
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 
-	go func() {
-		// 监听回调channel
-		for {
-			task := w.taskPools.PickAsyncCallback()
-			resp := "" // 从外部获取response
+	wg.Wait()
+}
 
-			if task == nil {
-				time.Sleep(10 * time.Second)
-				continue
-			} else {
-				go func() {
-					task.AsyncHandler(resp) // todo ,resp被改写到task里了 // 执行拿到异步结果后的处理
+func (w *Workflow) runJob(job *Job) {
+	// 1 根据job 找到pipeline
+	w.muPl.RLock()
+	pl, exists := w.pipelineMap[job.PipelineID]
+	w.muPl.RUnlock()
+	if !exists {
+		// log error
+		return
+	}
 
-					if task.GetStatus() == "not_done" {
-						w.taskPools.PushTask(task)
-					} else {
-						w.taskPools.DeleteStoreTask(task.GetID())
-					}
-				}()
-			}
+	// 2 根据pipeline 找到task
+	t := pl.task
 
-		}
-	}()
+	// 3 运行task
+	w.runTask(t)
 }
 
 func (w *Workflow) runTask(t taskpool.Tasker) {
@@ -84,23 +153,6 @@ func (w *Workflow) runTask(t taskpool.Tasker) {
 	}
 }
 
-// 管理回调, 解析任务, 调用任务的AsyncHandler
-// 在并发的环境下调用
-func (w *Workflow) CallbackHandler(id string) {
-	// 解析id，找到对应的wg，调用wg.Done()
-	// id格式： taskID-stageIndex-stepIndex
-	taskID := "" // 从外部获取taskID
-	resp := ""
-	task, ok := w.taskPools.GetStoreTask(taskID)
-	if !ok {
-		return
-	}
-	task.UpdateAsyncResp(resp)
-	w.taskPools.PushAsyncCallback(task)
-}
-
-
-
 func (w *Workflow) Close() {
 	// 中断正在运行的任务
 	// 释放资源
@@ -108,58 +160,57 @@ func (w *Workflow) Close() {
 	// 其他清理等
 }
 
-
 /*
-	定义
-	workflow
-		调度管理平台
-	pipeline
-		workflow 调度运行的对象
-		必须包含一个task 对象
-	task
-		task 和pipeline 有重叠的理解
-		task 可以是task再嵌套
-		包括并行任务，串行任务
+   定义
+   workflow
+       调度管理平台
+   pipeline
+       workflow 调度运行的对象
+       必须包含一个task 对象
+   task
+       task 和pipeline 有重叠的理解
+       task 可以是task再嵌套
+       包括并行任务，串行任务
 
-	job
-		workflow运行一个pipeline，即一次job的执行
-
-
-
-	workflow调度
-		服务自管理
-		无状态，支持水平扩展
-		负载情况，（统计，max， running， total）
-
-	workflow管理 
-		接口交互
-		pipeline, 代表一个任务序列
-			执行一次，有一次job description
+   job
+       workflow运行一个pipeline，即一次job的执行
 
 
 
+   workflow调度
+       服务自管理
+       无状态，支持水平扩展
+       负载情况，（统计，max， running， total）
+
+   workflow管理
+       接口交互
+       pipeline, 代表一个任务序列
+           执行一次，有一次job description
 
 
-	接口: pipeline
-		新建
-		运行
-		修改
-		查询
-		clone
-		trigger （context ）
-
-		重试
-		终止
-		跳过
-		回滚 // 
 
 
-	--------------------------------------------
-	任务
-		串行
-		并行
-		cron
-		on demand
-		任务通知（pre，post）
+
+   接口: pipeline
+       新建
+       运行
+       修改
+       查询
+       clone
+       trigger （context ）
+
+       重试
+       终止
+       跳过
+       回滚 //
+
+
+   --------------------------------------------
+   任务
+       串行
+       并行
+       cron
+       on demand
+       任务通知（pre，post）
 
 */

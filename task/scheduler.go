@@ -62,31 +62,31 @@ func (s *Scheduler) CallbackHandler() {
 // id格式： taskID-stageIndex-stepIndex
 // 解析id
 func (t *Task) decodeID(id string) (string, string) {
-	var gindex, sindex string
-	n := 0
-	for i := 0; i < len(id); i++ {
-		if id[i] == '-' {
-			n++
-			continue
-		}
-		if n == 1 {
-			gindex += string(id[i])
-		} else if n == 2 {
-			sindex += string(id[i])
-		}
-	}
-	return gindex, sindex
+    var gindex, sindex string
+    n := 0
+    for i := 0; i < len(id); i++ {
+        if id[i] == '-' {
+            n++
+            continue
+        }
+        if n == 1 {
+            gindex += string(id[i])
+        } else if n == 2 {
+            sindex += string(id[i])
+        }
+    }
+    return gindex, sindex
 }
 */
 
 /*
 // id: task-stageindex-stepindex
 func (t *Task) SetStepCompleted(id string) {
-	gindex, sindex := t.decodeID(id)
-	step, ok := t.stepsMap[gindex][sindex]
-	if !ok {
-		return
-	}
-	step.SetCompleted()
+    gindex, sindex := t.decodeID(id)
+    step, ok := t.stepsMap[gindex][sindex]
+    if !ok {
+        return
+    }
+    step.SetCompleted()
 }
 */
