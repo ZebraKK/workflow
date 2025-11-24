@@ -1,50 +1,50 @@
 package task
 
 import (
-	"sync"
+    "sync"
 )
 
 type Scheduler struct {
-	Tasks map[string]*Task
+    Tasks map[string]*Task
 
-	callbacks map[string]*sync.WaitGroup
+    callbacks map[string]*sync.WaitGroup
 }
 
 func NewScheduler() *Scheduler {
-	return &Scheduler{
-		Tasks: make(map[string]*Task),
-	}
+    return &Scheduler{
+        Tasks: make(map[string]*Task),
+    }
 }
 
 func (s *Scheduler) AddTask(t *Task) {
-	s.Tasks[t.ID] = t
+    s.Tasks[t.ID] = t
 }
 
 func (s *Scheduler) RunAll() error {
-	for _, task := range s.Tasks {
-		if err := task.Run(); err != nil {
-			return err
-		}
-	}
-	return nil
+    for _, task := range s.Tasks {
+        if err := task.Run(); err != nil {
+            return err
+        }
+    }
+    return nil
 }
 
 // 管理回调
 // 注册回调 taskID, stageIndex, stepIndex, callback func
 func (s *Scheduler) CompletionHandler(wg *sync.WaitGroup, id string) {
-	s.callbacks[id] = wg
+    s.callbacks[id] = wg
 }
 
 func (s *Scheduler) CallbackHandler() {
-	// 解析id，找到对应的wg，调用wg.Done()
-	id := "" // 从外部获取id
-	wg := s.callbacks[id]
-	if wg != nil {
-		wg.Done()
-	}
+    // 解析id，找到对应的wg，调用wg.Done()
+    id := "" // 从外部获取id
+    wg := s.callbacks[id]
+    if wg != nil {
+        wg.Done()
+    }
 
-	// del map
-	delete(s.callbacks, id)
+    // del map
+    delete(s.callbacks, id)
 }
 
 /*

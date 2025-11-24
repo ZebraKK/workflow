@@ -1,9 +1,9 @@
 package task
 
 import (
-	"strconv"
+    "strconv"
 
-	"workflow/step"
+    "workflow/step"
 )
 
 /*
@@ -19,52 +19,52 @@ const (
 */
 
 type Task struct {
-	Name  string
-	ID    string
-	Ctx   string       // TODO:
-	Steps []*step.Step // 数据结构TODO：优化
-	State string
+    Name  string
+    ID    string
+    Ctx   string       // TODO:
+    Steps []*step.Step // 数据结构TODO：优化
+    State string
 }
 
 func NewTask(name, id string) *Task {
 
-	task := &Task{
-		Name:  name,
-		Steps: make([]*step.Step, 0),
-		State: "created",
-	}
-	if id != "" {
-		task.ID = id
-	} else {
-		task.ID = name // todo: 生成唯一id
-	}
+    task := &Task{
+        Name:  name,
+        Steps: make([]*step.Step, 0),
+        State: "created",
+    }
+    if id != "" {
+        task.ID = id
+    } else {
+        task.ID = name // todo: 生成唯一id
+    }
 
-	return task
+    return task
 }
 
 func (t *Task) AddStep(s *step.Step) {
-	indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
-	// 串行, 并行的ID 生成规则不一样 todo
+    indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
+    // 串行, 并行的ID 生成规则不一样 todo
 
-	s.SetID(t.ID + "-" + indexStr)
+    s.SetID(t.ID + "-" + indexStr)
 
-	t.Steps = append(t.Steps, s)
+    t.Steps = append(t.Steps, s)
 }
 
 func (t *Task) Run() error {
-	return nil
+    return nil
 }
 
 func (t *Task) GetStatus() string {
-	return t.State
+    return t.State
 }
 
 func (t *Task) GetName() string {
-	return t.Name
+    return t.Name
 }
 
 func (t *Task) GetID() string {
-	return t.ID
+    return t.ID
 }
 
 func (t *Task) UpdateAsyncResp(resp string) {

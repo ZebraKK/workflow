@@ -1,13 +1,13 @@
 package example
 
 import (
-	"workflow"
+    "workflow"
 )
 
 func main() {
-	store := NewMyStore()
-	wf := workflow.NewWorkflow(store)
+    store := NewMyStore()
+    wf := workflow.NewWorkflow(store)
 
-	mytask := NewMyTask()
-	wf.CreatePipeline(mytask)
+    mytask := NewMyTask()
+    wf.CreatePipeline(mytask)
 }
