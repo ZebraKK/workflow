@@ -1,0 +1,35 @@
+#!/bin/sh
+# Git 提交前钩子：将所有文本文件中的硬 Tab（\t）转为 4 个空格
+
+# 定义需要处理的文件类型（可根据项目补充）
+FILE_TYPES="\.go$|\.c$|\.h$|\.java$|\.py$|\.js$|\.ts$|\.html$|\.css$|\.md$|\.txt$|\.sh$"
+# 排除不需要处理的文件（如 Makefile、.bat）
+EXCLUDE_FILES="Makefile$|\.bat$"
+
+# 获取本次提交的所有文件（暂存区文件）
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E "$FILE_TYPES" | grep -vE "$EXCLUDE_FILES")
+
+if [ -z "$STAGED_FILES" ]; then
+  exit 0
+fi
+
+changed=0
+for file in $STAGED_FILES; do
+    # 检查文件中是否有硬 Tab
+    if grep -q $'\t' "$file"; then
+        changed=1
+        # 替换硬 Tab 为 4 空格
+        if [ "$(uname)" = "Darwin" ]; then
+            sed -i '' 's/\t/    /g' "$file" # macOS：-i '' 表示原地替换，无备份
+        else
+            sed -i 's/\t/    /g' "$file"
+        fi
+        git add "$file"
+    fi
+done
+
+if [ "$changed" -eq 1 ]; then
+    echo "Git pre-commit hook: converted hard tabs to 4 spaces for staged files"
+    echo "If not yet committed, please re-commit after your review and confirm the changes"
+fi
+exit 0
