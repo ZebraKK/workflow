@@ -9,7 +9,6 @@ import (
 type Tasker interface {
     Run(ctx string, rcder *record.Record) error
     GetID() string
-    GetStatus() string
     AsyncHandler(resp string)
     UpdateAsyncResp(resp string) // 把resp 存到task里
 }
@@ -128,13 +127,22 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
 
 // 管理回调, 解析任务, 调用任务的AsyncHandler
 // 在并发的环境下调用
-func (w *Workflow) CallbackHandler(jobId string, resp string) {
-    // 解析id，找到对应的wg，调用wg.Done()
-    // id格式： taskID-stageIndex-stepIndex
+func (w *Workflow) CallbackHandler(id string, resp string) error {
+    // jobID 找到mgr 里的job对象
+    // recordID 找到 record 中的step
+    jobID := ""
+    recordID := ""
     w.muJs.RLock()
-    job, ok := w.jobsStore[jobId]
+    job, exists := w.jobsStore[jobId]
     w.muJs.RUnlock()
-    if ok {
-        job.Pipeline.task.AsyncHandler(resp)
+    if !exists {
+        return errors.New("pipeline not found")
+    }
+
+    select {
+    case w.AsyncCh <- job:
+        return nil
+    case <-time.After(time.Second * 5):
+        // handle full channel if needed
     }
 }

@@ -80,18 +80,6 @@ func (t *ParallelTask) Run(input string, rcder *record.Record) error {
                 }
             }()
 
-            defer func() {
-                if tErr != nil {
-                    nextRecord.Status = "failed"
-                } else {
-                    if s.IsAsync {
-                        nextRecord.Status = "async_waiting"
-                    } else {
-                        nextRecord.Status = "done"
-                    }
-                }
-            }()
-
             select {
             case <-ctx.Done():
                 tErr = ctx.Err()

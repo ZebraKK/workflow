@@ -40,11 +40,11 @@ func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
         rcder.AppendRecord(nextRecord)
 
         err := step.Run(ctx, nextRecord)
+        rcder.Status = nextRecord.Status
         if err != nil {
             return err
         }
 
-        rcder.Status = nextRecord.Status
         switch nextRecord.Status {
         case "failed", "async_waiting":
             return nil

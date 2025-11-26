@@ -105,6 +105,40 @@ func (w *Workflow) runJob(job *Job) {
     }
 }
 
+func (w *Workflow) asyncJobStart() {
+    var wg sync.WaitGroup
+    for range w.workerNum {
+        wg.Add(1)
+        go func() {
+           defer wg.Done()
+           for {
+            select {
+            case job, ok := <-w.AsyncCh:
+                if !ok {
+                    // log
+                    return
+                }
+                defer func() {
+                    if r := recover(); r != nil {
+                        // log the panic
+                    }
+                }()
+                job.Pipeline.task.AsyncHandler("")
+            case <-w.quitJobCh:
+                // log
+                return
+            }
+           }
+        }()
+    }
+
+    wg.Wait()
+}
+
+func (w *Workflow) runAsyncJob(job *Job) {
+
+}
+
 func (w *Workflow) Close() {
     // 中断正在运行的任务
     // 释放资源
