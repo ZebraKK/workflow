@@ -2,12 +2,10 @@ package workflow
 
 import (
     "sync"
-
-    "workflow/taskpool"
 )
 
 type Workflow struct {
-    taskPools *taskpool.TaskPool // 罗列 存储pipeline
+    //taskPools *taskpool.TaskPool // 罗列 存储pipeline // no-need
 
     pipelineMap map[string]*Pipeline // 管理pipeline
     muPl        sync.RWMutex
@@ -20,9 +18,9 @@ type Workflow struct {
     AsyncCh   chan *Job
 }
 
-func NewWorkflow(store taskpool.TaskStorer) *Workflow {
+func NewWorkflow() *Workflow {
     wf := &Workflow{
-        taskPools:   taskpool.NewTaskPool(store, 100),
+        //taskPools:   taskpool.NewTaskPool(store, 100),
         pipelineMap: make(map[string]*Pipeline),
         jobsStore:   make(map[string]*Job),
         workerNum:   5, // todo 配置化 or cpu*2
@@ -79,19 +77,15 @@ func (w *Workflow) runJob(job *Job) {
     w.jobsStore[job.ID] = job
     w.muJs.Unlock()
 
-    err := job.Pipeline.task.Run()
+    err := job.Pipeline.task.Run(job.ctx, job.record)
     if err != nil {
         //
     }
     // 中间状态记录？
     // update job 到db
+
     // job 后续继续运行处理,如异步等待,失败重试等
-
-}
-
-func (w *Workflow) runTask(t taskpool.Tasker) {
-    t.Run()
-    state := "" // t.GetState() // 获取任务状态
+    state := job.record.Status
     switch state {
     case "async_waiting":
         // 加入到异步等待任务记录中去即可。或者db化
@@ -99,7 +93,9 @@ func (w *Workflow) runTask(t taskpool.Tasker) {
     case "completed":
         // 清理任务
         // 从任务池中删除
-        w.taskPools.DeleteStoreTask(t.GetID())
+        w.muJs.Lock()
+        delete(w.jobsStore, job.ID)
+        w.muJs.Unlock()
     case "failed":
         // 失败处理，告警等
 

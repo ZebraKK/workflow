@@ -25,13 +25,13 @@ func NewMyTask() *task.SerialTask {
     }
 
     myaction := &myAction{}
-    step1 := step.NewStep("step1", myaction)
+    step1 := step.NewStep("step1", "", myaction)
     mytask.AddStep(step1)
 
-    step2 := step.NewStep("step2", myaction)
+    step2 := step.NewStep("step2", "", myaction)
     mytask.AddStep(step2)
 
-    step3 := step.NewStep("step3", myaction)
+    step3 := step.NewStep("step3", "", myaction)
     mytask.AddStep(step3)
 
     return mytask

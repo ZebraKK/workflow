@@ -1,8 +1,6 @@
 package task
 
 import (
-    "strconv"
-
     "workflow/step"
 )
 
@@ -43,10 +41,10 @@ func NewTask(name, id string) *Task {
 }
 
 func (t *Task) AddStep(s *step.Step) {
-    indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
+    //indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
     // 串行, 并行的ID 生成规则不一样 todo
 
-    s.SetID(t.ID + "-" + indexStr)
+    //s.SetID(t.ID + "-" + indexStr)
 
     t.Steps = append(t.Steps, s)
 }

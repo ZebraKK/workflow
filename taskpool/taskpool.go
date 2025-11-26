@@ -1,17 +1,12 @@
 package taskpool
 
+/*
 import (
     "debug/elf"
     "sync"
 )
 
-type Tasker interface {
-    Run() error
-    GetID() string
-    GetStatus() string
-    AsyncHandler(resp string)
-    UpdateAsyncResp(resp string) // 把resp 存到task里
-}
+
 
 type TaskStorer interface {
     GetStoreTask(id string) (Tasker, bool)
@@ -20,13 +15,10 @@ type TaskStorer interface {
 }
 
 type TaskPool struct {
-    /*---------------
-      存储可以替换 为db/redis/mq等
-    ---------------*/
+    //  存储可以替换 为db/redis/mq等
     TaskStore map[string]Tasker
     mu        sync.RWMutex
-    /*----------------
-      ---------------*/
+
 
     TaskCh  chan Tasker
     AsyncCh chan Tasker
@@ -59,10 +51,10 @@ func (tp *TaskPool) PickTask() Tasker {
         return nil
     }
 }
-
-/*
-store 的三件套: get,set,delete
 */
+/*
+//store 的三件套: get,set,delete
+
 func (tp *TaskPool) GetStoreTask(id string) (Tasker, bool) {
     tp.mu.RLock()
     defer tp.mu.RUnlock()
@@ -86,7 +78,6 @@ func (tp *TaskPool) DeleteStoreTask(id string) {
     delete(tp.TaskStore, id)
 }
 
-/*----------------------------------*/
 
 func (tp *TaskPool) PickAsyncCallback() Tasker {
     select {
@@ -105,3 +96,4 @@ func (tp *TaskPool) PushAsyncCallback(t Tasker) error {
         return &elf.FormatError{}
     }
 }
+*/

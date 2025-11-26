@@ -1,5 +1,11 @@
 package step
 
+import (
+    "errors"
+    "time"
+    "workflow/record"
+)
+
 type Actioner interface {
     StepActor() error
     DealAsyncResp(resp string) error
@@ -8,44 +14,44 @@ type Actioner interface {
 // 最小执行单元
 type Step struct {
     Description string
-    ID          string
-    State       string // created, processing, done, failed, canceled, retry, async_waiting
+    Name        string
     IsAsync     bool
-
-    execute Actioner
+    execute     Actioner
 }
 
-func NewStep(description string, actor Actioner) *Step {
+func NewStep(name, description string, actor Actioner) *Step {
     if actor == nil {
         return nil
     }
     return &Step{
+        Name:        name,
         Description: description,
-        State:       "created",
         execute:     actor,
     }
 }
 
-func (s *Step) SetID(id string) {
-    s.ID = id
-}
-
-func (s *Step) Run() error {
+func (s *Step) Run(ctx string, rcder *record.Record) error {
+    if rcder == nil {
+        return errors.New("record is nil")
+    }
 
     var err error
+    rcder.StartAt = time.Now().UnixMilli()
     defer func() {
+        rcder.EndAt = time.Now().UnixMilli()
+
         if err != nil {
-            s.State = "failed"
+            rcder.Status = "failed"
         } else {
             if s.IsAsync {
-                s.State = "async_waiting"
+                rcder.Status = "async_waiting"
             } else {
-                s.State = "done"
+                rcder.Status = "done"
             }
         }
     }()
 
-    s.State = "processing"
+    // 超时处理 TODO
     err = s.execute.StepActor()
 
     return err
@@ -53,18 +59,6 @@ func (s *Step) Run() error {
 
 // step 处理异步响应 (设置step给的自定义的函数)
 func (s *Step) DealWithResp(resp string) {
-    var err error
-    defer func() {
-        if err != nil {
-            s.State = "failed"
-        } else {
-            s.State = "done"
-        }
-    }()
 
-    err = s.execute.DealAsyncResp(resp)
-}
-
-func (s *Step) IsAsyncWaiting() bool {
-    return s.State == "async_waiting"
+    s.execute.DealAsyncResp(resp)
 }

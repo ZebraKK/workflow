@@ -1,5 +1,11 @@
 package task
 
+import (
+    "errors"
+    "time"
+    "workflow/record"
+)
+
 type SerialTask struct {
     Task
 
@@ -15,22 +21,40 @@ func NewSerialTask(name, id string) *SerialTask {
     return st
 }
 
-func (t *SerialTask) Run() error {
+func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
+    if rcder == nil {
+        return errors.New("record is nil")
+    }
+
+    rcder.Status = "processing"
+    rcder.StartAt = time.Now().UnixMilli()
+    defer func() {
+        rcder.EndAt = time.Now().UnixMilli()
+    }()
 
     for index := t.CurrentStage; index < len(t.Steps); index++ {
         step := t.Steps[index]
 
-        err := step.Run()
+        nextRecord := record.NewRecord(step.Name)
+        nextRecord.Status = "processing"
+        rcder.AppendRecord(nextRecord)
+
+        err := step.Run(ctx, nextRecord)
         if err != nil {
             return err
         }
-        // todo: 改进为是否继续, 有单独逻辑
-        if step.IsAsyncWaiting() {
-            t.CurrentStage = index
-            t.State = "async_waiting"
-            //t.AsyncRegister(t.ID) //? no need
-            break
+
+        rcder.Status = nextRecord.Status
+        switch nextRecord.Status {
+        case "failed", "async_waiting":
+            return nil
+        case "done":
+            // continue
+        default:
+            rcder.Status = "failed"
+            return errors.New("unknown step status: " + nextRecord.Status)
         }
+
         t.CurrentStage++
     }
 
@@ -46,7 +70,7 @@ func (t *SerialTask) AsyncHandler(resp string) {
 
     t.CurrentStage++
     t.State = "processing"
-    t.Run() // 返回池子？
+    t.Run("", nil) // 返回池子？
 }
 
 func (t *SerialTask) RunNext() {
@@ -57,6 +81,6 @@ func (t *SerialTask) RunNext() {
 
     t.CurrentStage++
     t.State = "processing"
-    t.Run()
+    t.Run("", nil)
 
 }

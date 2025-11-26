@@ -1,5 +1,6 @@
 package task
 
+/*
 import (
     "sync"
 )
@@ -21,11 +22,7 @@ func (s *Scheduler) AddTask(t *Task) {
 }
 
 func (s *Scheduler) RunAll() error {
-    for _, task := range s.Tasks {
-        if err := task.Run(); err != nil {
-            return err
-        }
-    }
+
     return nil
 }
 
@@ -47,7 +44,6 @@ func (s *Scheduler) CallbackHandler() {
     delete(s.callbacks, id)
 }
 
-/*
 // 设置step完成
 // 通过id设置step完成
 // 方便异步step完成后，通知task

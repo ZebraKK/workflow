@@ -2,26 +2,35 @@ package workflow
 
 import (
     "errors"
-    "workflow/taskpool"
+
+    "workflow/record"
 )
+
+type Tasker interface {
+    Run(ctx string, rcder *record.Record) error
+    GetID() string
+    GetStatus() string
+    AsyncHandler(resp string)
+    UpdateAsyncResp(resp string) // 把resp 存到task里
+}
 
 type Pipeline struct {
     Name        string
     ID          string
-    task        taskpool.Tasker
+    task        Tasker
     defaultCtx  string
     runningMode string // serial / parallel or others // lasted or every
 }
 
 type Job struct {
     ID          string
-    Pipeline  Pipeline
+    Pipeline    Pipeline
     description string
     ctx         string
-    record      *Record
+    record      *record.Record
 }
 
-func (w *Workflow) CreatePipeline(t taskpool.Tasker) error {
+func (w *Workflow) CreatePipeline(t Tasker) error {
     // check if pipeline with same ID exists
     w.muPl.RLock()
     _, exists := w.pipelineMap[t.GetID()]
@@ -65,7 +74,7 @@ func (w *Workflow) DeletePipeline(id string) error {
     return nil
 }
 
-func (w *Workflow) UpdatePipeline(id string, t taskpool.Tasker) error {
+func (w *Workflow) UpdatePipeline(id string, t Tasker) error {
     w.muPl.RLock()
     _, exists := w.pipelineMap[id]
     w.muPl.RUnlock()
@@ -105,6 +114,7 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
         Pipeline:    plInstance,
         ctx:         ctx,
         description: "Job for pipeline " + id,
+        record:      &record.Record{ID: id + "-record"},
     }
 
     select {
@@ -121,11 +131,10 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
 func (w *Workflow) CallbackHandler(jobId string, resp string) {
     // 解析id，找到对应的wg，调用wg.Done()
     // id格式： taskID-stageIndex-stepIndex
-    taskID := "" // 从外部获取taskID
-    task, ok := w.taskPools.GetStoreTask(taskID)
-    if !ok {
-        return
+    w.muJs.RLock()
+    job, ok := w.jobsStore[jobId]
+    w.muJs.RUnlock()
+    if ok {
+        job.Pipeline.task.AsyncHandler(resp)
     }
-    task.UpdateAsyncResp(resp)
-    w.taskPools.PushAsyncCallback(task)
 }

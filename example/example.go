@@ -5,8 +5,7 @@ import (
 )
 
 func main() {
-    store := NewMyStore()
-    wf := workflow.NewWorkflow(store)
+    wf := workflow.NewWorkflow()
 
     mytask := NewMyTask()
     wf.CreatePipeline(mytask)
