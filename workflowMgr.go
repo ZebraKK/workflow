@@ -12,6 +12,7 @@ type Tasker interface {
 	GetID() string
 	Run(ctx string, rcder *record.Record) error
 	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
+	StepsCount() int
 }
 
 type Pipeline struct {
@@ -121,7 +122,7 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
 		ctx:         ctx,
 		description: "Job for pipeline " + id,
 	}
-	job.record = record.NewRecord(job.ID, "")
+	job.record = record.NewRecord(job.ID, "", plInstance.task.StepsCount())
 
 	select {
 	case w.JobCh <- job:

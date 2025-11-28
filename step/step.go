@@ -13,9 +13,9 @@ type Actioner interface {
 
 // 最小执行单元
 type Step struct {
-	Description string
-	Name        string
-	IsAsync     bool
+	description string
+	name        string
+	isAsync     bool
 	execute     Actioner
 }
 
@@ -24,10 +24,14 @@ func NewStep(name, description string, actor Actioner) *Step {
 		return nil
 	}
 	return &Step{
-		Name:        name,
-		Description: description,
+		name:        name,
+		description: description,
 		execute:     actor,
 	}
+}
+
+func (s *Step) IsAsync() bool {
+	return s.isAsync
 }
 
 func (s *Step) Run(ctx string, rcder *record.Record) error {
@@ -43,7 +47,7 @@ func (s *Step) Run(ctx string, rcder *record.Record) error {
 		if err != nil {
 			rcder.Status = "failed"
 		} else {
-			if s.IsAsync {
+			if s.isAsync {
 				rcder.Status = "async_waiting"
 			} else {
 				rcder.Status = "done"
@@ -69,7 +73,7 @@ func (s *Step) AsyncHandler(resp string, runningID string, ids []int, stageIndex
 	}
 
 	if rcder.AsyncRecord == nil {
-		rcder.AsyncRecord = record.NewRecord(rcder.ID, "-async")
+		rcder.AsyncRecord = record.NewRecord(rcder.ID, "-async", 0)
 	}
 	rcder.AsyncRecord.StartAt = time.Now().UnixMilli()
 	defer func() {
@@ -87,4 +91,8 @@ func (s *Step) AsyncHandler(resp string, runningID string, ids []int, stageIndex
 	}()
 
 	err = s.execute.AsyncHandler(resp)
+}
+
+func (s *Step) StepsCount() int {
+	return 0
 }

@@ -33,13 +33,13 @@ func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
 	}()
 
 	for index := 0; index < len(t.Steps); index++ {
-		step := t.Steps[index]
+		s := t.Steps[index]
 
-		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index))
+		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index), s.StepsCount())
 		nextRecord.Status = "processing"
-		rcder.AppendRecord(nextRecord)
+		rcder.AddRecord(index, nextRecord)
 
-		err := step.Run(ctx, nextRecord)
+		err := s.Run(ctx, nextRecord)
 		rcder.Status = nextRecord.Status
 		if err != nil {
 			return err
@@ -75,10 +75,10 @@ func (t *SerialTask) AsyncHandler(resp string, runningID string, ids []int, stag
 	if index < 0 || index >= len(t.Steps) || index >= len(rcder.Records) {
 		return
 	}
-	step := t.Steps[index]
+	s := t.Steps[index]
 
 	nextRcrd := rcder.Records[index]
-	step.AsyncHandler(resp, runningID, ids, stageIndex+1, nextRcrd)
+	s.AsyncHandler(resp, runningID, ids, stageIndex+1, nextRcrd)
 
 	// update current-level status
 	for _, r := range rcder.Records {
@@ -89,14 +89,15 @@ func (t *SerialTask) AsyncHandler(resp string, runningID string, ids []int, stag
 	}
 	rcder.Status = "done"
 
+	// 是否继续，是上一层来决定的事情。
 	if rcder.Status == "done" && index != len(t.Steps)-1 {
 
 		// todo: reuse Run() logic
 		for i := index + 1; i < len(t.Steps); i++ {
 			nextStep := t.Steps[i]
-			nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(i))
+			nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(i), nextStep.StepsCount())
 			nextRecord.Status = "processing"
-			rcder.AppendRecord(nextRecord)
+			rcder.AddRecord(i, nextRecord)
 
 			err := nextStep.Run("", nextRecord)
 			rcder.Status = nextRecord.Status

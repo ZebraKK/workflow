@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 type Record struct {
@@ -14,16 +13,14 @@ type Record struct {
 	Status      string // created, processing, done, failed, canceled, retry, async_waiting
 	AsyncRecord *Record
 
-	Records    []*Record // 子记录
-	RecordsMap map[string]*Record
-	mu         sync.RWMutex
+	Records []*Record // 子记录
+
 }
 
-func NewRecord(prefix, index string) *Record {
+func NewRecord(prefix, index string, size int) *Record {
 	r := &Record{
-		Status:     "created",
-		Records:    make([]*Record, 0),
-		RecordsMap: make(map[string]*Record),
+		Status:  "created",
+		Records: make([]*Record, size),
 	}
 
 	r.ID = r.NextRecordID(prefix, index)
@@ -53,19 +50,11 @@ func (r *Record) NextRecordID(prefix, index string) string {
 	return nextID
 }
 
-// json 格式的追加存储
-func (r *Record) AppendRecord(rcd *Record) {
-	r.Records = append(r.Records, rcd)
-}
-
-func (r *Record) AddRecord(rcd *Record) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.RecordsMap == nil {
-		r.RecordsMap = make(map[string]*Record)
+func (r *Record) AddRecord(index int, rcd *Record) {
+	if index < 0 || index >= len(r.Records) {
+		return
 	}
-	r.RecordsMap[rcd.ID] = rcd
+	r.Records[index] = rcd
 }
 
 func (r *Record) IsAsyncWaiting() bool {

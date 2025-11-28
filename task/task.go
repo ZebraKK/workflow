@@ -1,7 +1,7 @@
 package task
 
 import (
-	"workflow/step"
+	"workflow/record"
 )
 
 /*
@@ -16,21 +16,29 @@ const (
 )
 */
 
-type Task struct {
-	Name  string
-	ID    string
-	Ctx   string       // TODO:
-	Steps []*step.Step // 数据结构TODO：优化
+type steper interface {
+	IsAsync() bool
+	Run(ctx string, rcder *record.Record) error
+	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
+	StepsCount() int
 }
 
-func NewTask(name, id string, stp *step.Step) *Task {
+type Task struct {
+	Name    string
+	ID      string
+	Ctx     string   // TODO:
+	Steps   []steper // 数据结构TODO：优化
+	isAsync bool
+}
+
+func NewTask(name, id string, stp steper) *Task {
 	if stp == nil {
 		return nil
 	}
 
 	task := &Task{
 		Name:  name,
-		Steps: make([]*step.Step, 0),
+		Steps: make([]steper, 0),
 	}
 	if id != "" {
 		task.ID = id
@@ -43,17 +51,20 @@ func NewTask(name, id string, stp *step.Step) *Task {
 	return task
 }
 
-func (t *Task) AddStep(s *step.Step) {
-	//indexStr := strconv.Itoa(len(t.Steps)) // 生成 step index 字符串
-	// 串行, 并行的ID 生成规则不一样 todo
-
-	//s.SetID(t.ID + "-" + indexStr)
-
+// 需要预设好。不支持动态添加。如果开始运行了，就不支持添加了
+func (t *Task) AddStep(s steper) {
 	t.Steps = append(t.Steps, s)
+	if s.IsAsync() {
+		t.isAsync = true
+	}
 }
 
-func (t *Task) GetStatus() string {
-	return ""
+func (t *Task) IsAsync() bool {
+	return t.isAsync
+}
+
+func (t *Task) StepsCount() int {
+	return len(t.Steps)
 }
 
 func (t *Task) GetName() string {

@@ -138,7 +138,7 @@ func (w *Workflow) asyncJobStart() {
 	wg.Wait()
 }
 
-func parseRunningID(runningID string) []int {
+func parseTaskByRunningID(runningID string) []int {
 	parts := strings.Split(runningID, "-")
 
 	indices := make([]int, 0, len(parts)-1)
@@ -152,9 +152,13 @@ func parseRunningID(runningID string) []int {
 
 func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 
-	ids := parseRunningID(asyncJob.RunningID)
+	ids := parseTaskByRunningID(asyncJob.RunningID)
 	stageIndex := 0 // 从第0个开始
 	asyncJob.Job.Pipeline.task.AsyncHandler(asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record)
+
+	task := asyncJob.Job.Pipeline.task
+	task.AsyncHandler(asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record)
+
 }
 
 func (w *Workflow) Close() {
