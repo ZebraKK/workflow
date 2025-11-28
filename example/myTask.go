@@ -3,8 +3,8 @@ package example
 import (
 	"fmt"
 
+	"workflow/stage"
 	"workflow/step"
-	"workflow/task"
 )
 
 type myAction struct{}
@@ -19,12 +19,10 @@ func (ma *myAction) AsyncHandler(resp string) error {
 	return nil
 }
 
-func NewMyTask() *task.SerialTask {
+func NewMyTask() *stage.Stage {
 	myaction := &myAction{}
 	step0 := step.NewStep("step0", "", myaction)
-	mytask := &task.SerialTask{
-		Task: *task.NewTask("MyTask", "", step0),
-	}
+	mytask := stage.NewStage("myTask", "myTaskID", "serial", step0)
 
 	step1 := step.NewStep("step1", "", myaction)
 	mytask.AddStep(step1)

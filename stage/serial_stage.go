@@ -1,4 +1,4 @@
-package task
+package stage
 
 import (
 	"errors"
@@ -8,20 +8,9 @@ import (
 	"workflow/record"
 )
 
-type SerialTask struct {
-	Task
-}
-
-func NewSerialTask(name, id string) *SerialTask {
-	st := &SerialTask{
-		Task: *NewTask(name, id, nil),
-	}
-	return st
-}
-
 // 有可能嵌套的
 // 每一层都有超时设置
-func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
+func (t *Stage) serialRun(ctx string, rcder *record.Record) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
@@ -33,13 +22,13 @@ func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
 	}()
 
 	for index := 0; index < len(t.Steps); index++ {
-		s := t.Steps[index]
+		stp := t.Steps[index]
 
-		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index), s.StepsCount())
+		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index), stp.StepsCount())
 		nextRecord.Status = "processing"
 		rcder.AddRecord(index, nextRecord)
 
-		err := s.Run(ctx, nextRecord)
+		err := stp.Run(ctx, nextRecord)
 		rcder.Status = nextRecord.Status
 		if err != nil {
 			return err
@@ -65,7 +54,7 @@ func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
 
 // 非递归版本
 // 状态回溯
-func (t *SerialTask) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
+func (t *Stage) serialAsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
 	// 递归终止条件
 	if rcder == nil || stageIndex >= len(ids) {
 		return
@@ -75,10 +64,10 @@ func (t *SerialTask) AsyncHandler(resp string, runningID string, ids []int, stag
 	if index < 0 || index >= len(t.Steps) || index >= len(rcder.Records) {
 		return
 	}
-	s := t.Steps[index]
+	stp := t.Steps[index]
 
 	nextRcrd := rcder.Records[index]
-	s.AsyncHandler(resp, runningID, ids, stageIndex+1, nextRcrd)
+	stp.AsyncHandler(resp, runningID, ids, stageIndex+1, nextRcrd)
 
 	// update current-level status
 	for _, r := range rcder.Records {
@@ -149,8 +138,3 @@ func (t *SerialTask) AsyncHandler(resp string, stage int, runningID string, rcde
 
 }
 */
-
-func (t *SerialTask) RunNext() {
-	// TODO
-
-}

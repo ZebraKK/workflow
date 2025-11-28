@@ -1,10 +1,92 @@
-package task
+package stage
 
 import (
 	"workflow/record"
 )
 
+type steper interface {
+	IsAsync() bool
+	Run(ctx string, rcder *record.Record) error
+	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
+	StepsCount() int
+}
+
+type Stage struct {
+	Name    string
+	ID      string
+	Ctx     string   // TODO:
+	Mode    string   // serial / parallel
+	Steps   []steper // 数据结构TODO：优化
+	isAsync bool
+}
+
+func NewStage(name, id, mode string, stp steper) *Stage {
+	if stp == nil {
+		return nil
+	}
+
+	stage := &Stage{
+		Name:  name,
+		Mode:  mode,
+		Steps: make([]steper, 0),
+	}
+	if id != "" {
+		stage.ID = id
+	} else {
+		stage.ID = name // todo: 生成唯一id
+	}
+
+	stage.AddStep(stp)
+
+	return stage
+}
+
+// 需要预设好。不支持动态添加。如果开始运行了，就不支持添加了
+func (s *Stage) AddStep(stp steper) {
+	s.Steps = append(s.Steps, stp)
+	if stp.IsAsync() {
+		s.isAsync = true
+	}
+}
+
+func (s *Stage) IsAsync() bool {
+	return s.isAsync
+}
+
+func (s *Stage) StepsCount() int {
+	return len(s.Steps)
+}
+
+func (s *Stage) GetName() string {
+	return s.Name
+}
+
+func (s *Stage) GetID() string {
+	return s.ID
+}
+
+func (s *Stage) Run(ctx string, rcder *record.Record) error {
+	switch s.Mode {
+	case "serial":
+		return s.serialRun(ctx, rcder)
+	case "parallel":
+		return s.parallelRun(ctx, rcder)
+	default:
+		return nil
+	}
+}
+
+func (s *Stage) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
+	switch s.Mode {
+	case "serial":
+		s.serialAsyncHandler(resp, runningID, ids, stageIndex, rcder)
+	case "parallel":
+		s.parallelAsyncHandler(resp, runningID, ids, stageIndex, rcder)
+	}
+}
+
 /*
+
 type TaskState int
 
 const (
@@ -14,71 +96,7 @@ const (
     tFailed
     tRetry
 )
-*/
 
-type steper interface {
-	IsAsync() bool
-	Run(ctx string, rcder *record.Record) error
-	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
-	StepsCount() int
-}
-
-type Task struct {
-	Name    string
-	ID      string
-	Ctx     string   // TODO:
-	Steps   []steper // 数据结构TODO：优化
-	isAsync bool
-}
-
-func NewTask(name, id string, stp steper) *Task {
-	if stp == nil {
-		return nil
-	}
-
-	task := &Task{
-		Name:  name,
-		Steps: make([]steper, 0),
-	}
-	if id != "" {
-		task.ID = id
-	} else {
-		task.ID = name // todo: 生成唯一id
-	}
-
-	task.AddStep(stp)
-
-	return task
-}
-
-// 需要预设好。不支持动态添加。如果开始运行了，就不支持添加了
-func (t *Task) AddStep(s steper) {
-	t.Steps = append(t.Steps, s)
-	if s.IsAsync() {
-		t.isAsync = true
-	}
-}
-
-func (t *Task) IsAsync() bool {
-	return t.isAsync
-}
-
-func (t *Task) StepsCount() int {
-	return len(t.Steps)
-}
-
-func (t *Task) GetName() string {
-	return t.Name
-}
-
-func (t *Task) GetID() string {
-	return t.ID
-}
-
-func (t *Task) UpdateAsyncResp(resp string) {
-}
-
-/*
    func (t *Task) SetStatus(newState TaskState) error {
        t.mu.Lock()
        defer t.mu.Unlock()
