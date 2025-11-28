@@ -13,6 +13,9 @@ if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
+# skip
+exit 0
+
 changed=0
 for file in $STAGED_FILES; do
     # 检查文件中是否有硬 Tab

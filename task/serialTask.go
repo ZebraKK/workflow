@@ -1,86 +1,155 @@
 package task
 
 import (
-    "errors"
-    "time"
-    "workflow/record"
+	"errors"
+	"strconv"
+	"time"
+
+	"workflow/record"
 )
 
 type SerialTask struct {
-    Task
-
-    CurrentStage int // 当前执行到第几阶段
-
+	Task
 }
 
 func NewSerialTask(name, id string) *SerialTask {
-    st := &SerialTask{
-        Task:         *NewTask(name, id),
-        CurrentStage: 0,
-    }
-    return st
+	st := &SerialTask{
+		Task: *NewTask(name, id, nil),
+	}
+	return st
 }
 
+// 有可能嵌套的
+// 每一层都有超时设置
 func (t *SerialTask) Run(ctx string, rcder *record.Record) error {
-    if rcder == nil {
-        return errors.New("record is nil")
-    }
+	if rcder == nil {
+		return errors.New("record is nil")
+	}
 
-    rcder.Status = "processing"
-    rcder.StartAt = time.Now().UnixMilli()
-    defer func() {
-        rcder.EndAt = time.Now().UnixMilli()
-    }()
+	rcder.Status = "processing"
+	rcder.StartAt = time.Now().UnixMilli()
+	defer func() {
+		rcder.EndAt = time.Now().UnixMilli()
+	}()
 
-    for index := t.CurrentStage; index < len(t.Steps); index++ {
-        step := t.Steps[index]
+	for index := 0; index < len(t.Steps); index++ {
+		step := t.Steps[index]
 
-        nextRecord := record.NewRecord(step.Name)
-        nextRecord.Status = "processing"
-        rcder.AppendRecord(nextRecord)
+		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index))
+		nextRecord.Status = "processing"
+		rcder.AppendRecord(nextRecord)
 
-        err := step.Run(ctx, nextRecord)
-        rcder.Status = nextRecord.Status
-        if err != nil {
-            return err
-        }
+		err := step.Run(ctx, nextRecord)
+		rcder.Status = nextRecord.Status
+		if err != nil {
+			return err
+		}
 
-        switch nextRecord.Status {
-        case "failed", "async_waiting":
-            return nil
-        case "done":
-            // continue
-        default:
-            rcder.Status = "failed"
-            return errors.New("unknown step status: " + nextRecord.Status)
-        }
+		switch nextRecord.Status {
+		case "failed", "async_waiting":
+			return nil
+		case "done":
+			// continue
+		default:
+			rcder.Status = "failed"
+			return errors.New("unknown step status: " + nextRecord.Status)
+		}
+	}
 
-        t.CurrentStage++
-    }
+	// workflow 的AsyncRegister
 
-    // workflow 的AsyncRegister
-
-    return nil
+	return nil
 }
 
 // 调用step异步的回调处理, 根据结果, 继续task的执行
-func (t *SerialTask) AsyncHandler(resp string) {
-    step := t.Steps[t.CurrentStage]
-    step.DealWithResp(resp)
 
-    t.CurrentStage++
-    t.State = "processing"
-    t.Run("", nil) // 返回池子？
+// 非递归版本
+// 状态回溯
+func (t *SerialTask) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
+	// 递归终止条件
+	if rcder == nil || stageIndex >= len(ids) {
+		return
+	}
+
+	index := ids[stageIndex]
+	if index < 0 || index >= len(t.Steps) || index >= len(rcder.Records) {
+		return
+	}
+	step := t.Steps[index]
+
+	nextRcrd := rcder.Records[index]
+	step.AsyncHandler(resp, runningID, ids, stageIndex+1, nextRcrd)
+
+	// update current-level status
+	for _, r := range rcder.Records {
+		if r.Status != "done" { // todo: 可能还有其他状态
+			rcder.Status = r.Status
+			return
+		}
+	}
+	rcder.Status = "done"
+
+	if rcder.Status == "done" && index != len(t.Steps)-1 {
+
+		// todo: reuse Run() logic
+		for i := index + 1; i < len(t.Steps); i++ {
+			nextStep := t.Steps[i]
+			nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(i))
+			nextRecord.Status = "processing"
+			rcder.AppendRecord(nextRecord)
+
+			err := nextStep.Run("", nextRecord)
+			rcder.Status = nextRecord.Status
+			if err != nil {
+				return
+			}
+
+			switch nextRecord.Status {
+			case "failed", "async_waiting":
+				return
+			case "done":
+				// continue
+			default:
+				rcder.Status = "failed"
+				return
+			}
+		}
+	}
 }
 
-func (t *SerialTask) RunNext() {
-    if t.CurrentStage >= len(t.Steps) {
-        t.State = "completed"
-        return
-    }
+/*
+// 递归版本 todo
+func (t *SerialTask) AsyncHandler(resp string, stage int, runningID string, rcder *record.Record) {
 
-    t.CurrentStage++
-    t.State = "processing"
-    t.Run("", nil)
+	if rcder == nil {
+		return
+	}
+
+	nextRcder := rcder.Records[0]
+	if runningID == nextRcder.ID {
+
+		t.Steps[0].AsyncHandler(resp)
+		// update status
+
+
+	} else {
+		// 递归调用
+		nextTask := NewSerialTask(t.Name, t.ID)
+		nextTask.Steps = t.Steps[1:]
+		nextTask.AsyncHandler(resp, stage-1, runningID, nextRcder)
+	}
+
+	// runningID format like as: xxx-0-1.1-2.3-3.2-4.1
+	// 代表 taskid-stageindex.subindex-stageindex.subindex...
+	ids := strings.Split(runningID, "-")
+
+	// 可以递归(recursion)查找, 类似于Fibonacci heap
+	// 下层的结果影响当前层的状态修改
+
+}
+*/
+
+func (t *SerialTask) RunNext() {
+	// TODO
 
 }
