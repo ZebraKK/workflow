@@ -68,7 +68,7 @@ func (s *Stage) GetID() string {
 func (s *Stage) Run(ctx string, rcder *record.Record) error {
 	switch s.Mode {
 	case "serial":
-		return s.serialRun(ctx, rcder)
+		return s.serialRun(ctx, 0, rcder) // start from index 0
 	case "parallel":
 		return s.parallelRun(ctx, rcder)
 	default:

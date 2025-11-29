@@ -10,49 +10,49 @@ import (
 
 // 有可能嵌套的
 // 每一层都有超时设置
-func (t *Stage) serialRun(ctx string, rcder *record.Record) error {
+func (t *Stage) serialRun(ctx string, index int, rcder *record.Record) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
 
 	rcder.Status = "processing"
 	rcder.StartAt = time.Now().UnixMilli()
+	var err error
 	defer func() {
 		rcder.EndAt = time.Now().UnixMilli()
 	}()
 
-	for index := 0; index < len(t.Steps); index++ {
-		stp := t.Steps[index]
+	for i := index; i < len(t.Steps); i++ {
+		stp := t.Steps[i]
 
-		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(index), stp.StepsCount())
-		nextRecord.Status = "processing"
-		rcder.AddRecord(index, nextRecord)
+		nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(i), stp.StepsCount())
+		rcder.AddRecord(i, nextRecord)
 
-		err := stp.Run(ctx, nextRecord)
+		err_ := stp.Run(ctx, nextRecord)
 		rcder.Status = nextRecord.Status
-		if err != nil {
-			return err
+		if err_ != nil {
+			err = err_
+			break
 		}
 
 		switch nextRecord.Status {
 		case "failed", "async_waiting":
-			return nil
+			return err
 		case "done":
 			// continue
 		default:
 			rcder.Status = "failed"
-			return errors.New("unknown step status: " + nextRecord.Status)
+			err = errors.New("unknown step status: " + nextRecord.Status)
+			return err
 		}
 	}
 
 	// workflow 的AsyncRegister
 
-	return nil
+	return err
 }
 
 // 调用step异步的回调处理, 根据结果, 继续task的执行
-
-// 非递归版本
 // 状态回溯
 func (t *Stage) serialAsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
 	// 递归终止条件
@@ -76,65 +76,9 @@ func (t *Stage) serialAsyncHandler(resp string, runningID string, ids []int, sta
 			return
 		}
 	}
-	rcder.Status = "done"
 
-	// 是否继续，是上一层来决定的事情。
-	if rcder.Status == "done" && index != len(t.Steps)-1 {
-
-		// todo: reuse Run() logic
-		for i := index + 1; i < len(t.Steps); i++ {
-			nextStep := t.Steps[i]
-			nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(i), nextStep.StepsCount())
-			nextRecord.Status = "processing"
-			rcder.AddRecord(i, nextRecord)
-
-			err := nextStep.Run("", nextRecord)
-			rcder.Status = nextRecord.Status
-			if err != nil {
-				return
-			}
-
-			switch nextRecord.Status {
-			case "failed", "async_waiting":
-				return
-			case "done":
-				// continue
-			default:
-				rcder.Status = "failed"
-				return
-			}
-		}
+	if index < len(t.Steps)-1 { //serial
+		// 继续执行后续步骤
+		t.serialRun("", index+1, rcder)
 	}
 }
-
-/*
-// 递归版本 todo
-func (t *SerialTask) AsyncHandler(resp string, stage int, runningID string, rcder *record.Record) {
-
-	if rcder == nil {
-		return
-	}
-
-	nextRcder := rcder.Records[0]
-	if runningID == nextRcder.ID {
-
-		t.Steps[0].AsyncHandler(resp)
-		// update status
-
-
-	} else {
-		// 递归调用
-		nextTask := NewSerialTask(t.Name, t.ID)
-		nextTask.Steps = t.Steps[1:]
-		nextTask.AsyncHandler(resp, stage-1, runningID, nextRcder)
-	}
-
-	// runningID format like as: xxx-0-1.1-2.3-3.2-4.1
-	// 代表 taskid-stageindex.subindex-stageindex.subindex...
-	ids := strings.Split(runningID, "-")
-
-	// 可以递归(recursion)查找, 类似于Fibonacci heap
-	// 下层的结果影响当前层的状态修改
-
-}
-*/

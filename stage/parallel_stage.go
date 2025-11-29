@@ -97,6 +97,8 @@ func (s *Stage) worker(stp steper, input string, rcder *record.Record) <-chan er
 // 异步处理，也可能并发的来
 // 任务状态不能直接更新
 func (s *Stage) parallelAsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
+	// status processing 需要等待么？
+
 	// 递归终止条件
 	if rcder == nil || stageIndex >= len(ids) {
 		return
@@ -121,5 +123,5 @@ func (s *Stage) parallelAsyncHandler(resp string, runningID string, ids []int, s
 	}
 
 	// continue to next steps if all done
-
+	// 并发的情况下，不继续执行后续步骤，由外层控制
 }

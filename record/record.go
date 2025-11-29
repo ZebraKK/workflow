@@ -6,15 +6,21 @@ import (
 	"strings"
 )
 
+const (
+	StatusCreated      = "created"
+	StatusProcessing   = "processing"
+	StatusDone         = "done"
+	StatusFailed       = "failed"
+	StatusAsyncWaiting = "async_waiting"
+)
+
 type Record struct {
 	ID          string
 	StartAt     int64
 	EndAt       int64
 	Status      string // created, processing, done, failed, canceled, retry, async_waiting
 	AsyncRecord *Record
-
-	Records []*Record // 子记录
-
+	Records     []*Record // 子记录 和 stage中的 steps 一一对应
 }
 
 func NewRecord(prefix, index string, size int) *Record {
@@ -23,11 +29,11 @@ func NewRecord(prefix, index string, size int) *Record {
 		Records: make([]*Record, size),
 	}
 
-	r.ID = r.NextRecordID(prefix, index)
+	r.ID = r.recordID(prefix, index)
 	return r
 }
 
-func (r *Record) NextRecordID(prefix, index string) string {
+func (r *Record) recordID(prefix, index string) string {
 	if index == "-async" {
 		return fmt.Sprintf("%s-async", prefix)
 	}

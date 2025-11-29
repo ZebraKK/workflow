@@ -41,6 +41,7 @@ func (s *Step) Run(ctx string, rcder *record.Record) error {
 
 	var err error
 	rcder.StartAt = time.Now().UnixMilli()
+	rcder.Status = "processing"
 	defer func() {
 		rcder.EndAt = time.Now().UnixMilli()
 
