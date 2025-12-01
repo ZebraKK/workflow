@@ -1,0 +1,137 @@
+package stage
+
+import (
+	"workflow/logger"
+	"workflow/record"
+)
+
+// Use logger.Logger from shared logger package
+type Logger = logger.Logger
+
+type steper interface {
+	IsAsync() bool
+	StepsCount() int
+	Handle(ctx interface{}, rcder *record.Record, logger Logger) error
+	AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
+}
+
+type Stage struct {
+	Name    string
+	ID      string
+	Ctx     string   // TODO:
+	Mode    string   // serial / parallel
+	Steps   []steper // 数据结构TODO：优化
+	isAsync bool
+}
+
+func NewStage(name, id, mode string, stp steper) *Stage {
+	if stp == nil {
+		return nil
+	}
+
+	stage := &Stage{
+		Name:  name,
+		Mode:  mode,
+		Steps: make([]steper, 0),
+	}
+	if id != "" {
+		stage.ID = id
+	} else {
+		stage.ID = name // todo: 生成唯一id
+	}
+
+	stage.AddStep(stp)
+
+	return stage
+}
+
+// 需要预设好。不支持动态添加。如果开始运行了，就不支持添加了
+func (s *Stage) AddStep(stp steper) {
+	s.Steps = append(s.Steps, stp)
+	if stp.IsAsync() {
+		s.isAsync = true
+	}
+}
+
+func (s *Stage) IsAsync() bool {
+	return s.isAsync
+}
+
+func (s *Stage) StepsCount() int {
+	return len(s.Steps)
+}
+
+func (s *Stage) GetName() string {
+	return s.Name
+}
+
+func (s *Stage) GetID() string {
+	return s.ID
+}
+
+func (s *Stage) Handle(ctx interface{}, rcder *record.Record, logger Logger) error {
+	switch s.Mode {
+	case "serial":
+		return s.serialHandle(ctx, 0, rcder, logger) // start from index 0
+	case "parallel":
+		return s.parallelHandle(ctx, rcder, logger)
+	default:
+		return nil
+	}
+}
+
+func (s *Stage) AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+	switch s.Mode {
+	case "serial":
+		s.serialAsyncHandle(ctx, resp, runningID, ids, stageIndex, rcder, logger)
+	case "parallel":
+		s.parallelAsyncHandle(ctx, resp, runningID, ids, stageIndex, rcder, logger)
+	}
+}
+
+/*
+
+type TaskState int
+
+const (
+    tCreated TaskState = iota
+    tProcessing
+    tSuccess
+    tFailed
+    tRetry
+)
+
+   func (t *Task) SetStatus(newState TaskState) error {
+       t.mu.Lock()
+       defer t.mu.Unlock()
+
+       switch t.State {
+       case tCreated:
+           if newState == tProcessing {
+               t.State = tProcessing
+               return nil
+           }
+       case tProcessing:
+           switch newState {
+           case tSuccess:
+               t.State = tSuccess
+               return nil
+           case tFailed:
+               t.State = tFailed
+               return nil
+           }
+       case tFailed:
+           if newState == tRetry {
+               t.State = tRetry
+               return nil
+           }
+       case tRetry:
+           if newState == tProcessing {
+               t.State = tProcessing
+               return nil
+           }
+       }
+
+       return nil
+   }
+*/

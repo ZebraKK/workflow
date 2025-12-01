@@ -1,0 +1,24 @@
+# 核心规则：所有文本文件默认使用 LF，提交时自动转换，拉取时适配本地系统
+# Core rule: All text files use LF by default, 
+#            with automatic conversion on commit and adaptation to the local system on checkout
+* text=auto eol=lf
+
+# 明确指定常见文本文件类型（避免 Git 误判为二进制）
+# Explicitly specify common text file types 
+# (to prevent Git from misclassifying them as binary files)
+*.go      text eol=lf
+*.md      text eol=lf
+*.txt     text eol=lf
+Makefile  text eol=lf
+*.sh      text eol=lf
+
+# 二进制文件（图片、压缩包等）不转换（避免损坏）
+# Do not convert binary files (such as images and compressed packages) to avoid corruption
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.zip     binary
+*.tar.gz  binary
+*.exe     binary
+*.dll     binary
