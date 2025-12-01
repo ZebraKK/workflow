@@ -12,7 +12,7 @@ import (
 
 const maxConcurrentJobs = 5 // 默认最大并发数5 TODO
 
-func (s *Stage) parallelRun(input interface{}, rcder *record.Record, logger Logger) error {
+func (s *Stage) parallelHandle(input interface{}, rcder *record.Record, logger Logger) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
@@ -103,14 +103,14 @@ func (s *Stage) parallelRun(input interface{}, rcder *record.Record, logger Logg
 func (s *Stage) worker(stp steper, input interface{}, rcder *record.Record, logger Logger) <-chan error {
 	done := make(chan error, 1)
 	// task 时长 TODO
-	done <- stp.Run(input, rcder, logger)
+	done <- stp.Handle(input, rcder, logger)
 
 	return done
 }
 
 // 异步处理，也可能并发的来
 // 任务状态不能直接更新
-func (s *Stage) parallelAsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+func (s *Stage) parallelAsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	stageLogger := logger.With("stage", s.Name, "stageID", s.ID, "mode", "parallel", "runningID", runningID)
 	stageLogger.Info("Handling async callback for parallel stage")
 
@@ -132,7 +132,7 @@ func (s *Stage) parallelAsyncHandler(ctx interface{}, resp interface{}, runningI
 
 	nextRcrd := rcder.Records[index]
 	stepLogger.Debug("Calling step async handler")
-	stp.AsyncHandler(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
+	stp.AsyncHandle(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
 
 	// 并发的情况: 某一个任务的异步响应来了，之前的任务还没完成。还在running状态 to-defenses
 	// update current-level status

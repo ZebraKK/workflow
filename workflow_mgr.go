@@ -16,9 +16,10 @@ var GlobalHash = sha256.New()
 var GlobalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 type Tasker interface {
-	Run(ctx interface{}, rcder *record.Record, logger Logger) error
-	AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
+	IsAsync() bool
 	StepsCount() int
+	Handle(ctx interface{}, rcder *record.Record, logger Logger) error
+	AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 }
 
 type Pipeline struct {
@@ -59,7 +60,6 @@ func (w *Workflow) CreatePipeline(name string, t Tasker) error {
 		return errors.New("pipeline name cannot be empty")
 	}
 
-	// check if pipeline with same ID exists
 	w.muPl.RLock()
 	_, exists := w.pipelineMapWithName[name]
 	w.muPl.RUnlock()

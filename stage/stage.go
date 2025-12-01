@@ -10,9 +10,9 @@ type Logger = logger.Logger
 
 type steper interface {
 	IsAsync() bool
-	Run(ctx interface{}, rcder *record.Record, logger Logger) error
-	AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 	StepsCount() int
+	Handle(ctx interface{}, rcder *record.Record, logger Logger) error
+	AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 }
 
 type Stage struct {
@@ -69,23 +69,23 @@ func (s *Stage) GetID() string {
 	return s.ID
 }
 
-func (s *Stage) Run(ctx interface{}, rcder *record.Record, logger Logger) error {
+func (s *Stage) Handle(ctx interface{}, rcder *record.Record, logger Logger) error {
 	switch s.Mode {
 	case "serial":
-		return s.serialRun(ctx, 0, rcder, logger) // start from index 0
+		return s.serialHandle(ctx, 0, rcder, logger) // start from index 0
 	case "parallel":
-		return s.parallelRun(ctx, rcder, logger)
+		return s.parallelHandle(ctx, rcder, logger)
 	default:
 		return nil
 	}
 }
 
-func (s *Stage) AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+func (s *Stage) AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	switch s.Mode {
 	case "serial":
-		s.serialAsyncHandler(ctx, resp, runningID, ids, stageIndex, rcder, logger)
+		s.serialAsyncHandle(ctx, resp, runningID, ids, stageIndex, rcder, logger)
 	case "parallel":
-		s.parallelAsyncHandler(ctx, resp, runningID, ids, stageIndex, rcder, logger)
+		s.parallelAsyncHandle(ctx, resp, runningID, ids, stageIndex, rcder, logger)
 	}
 }
 

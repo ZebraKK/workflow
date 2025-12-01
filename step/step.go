@@ -1,50 +1,67 @@
 package step
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"workflow/logger"
 	"workflow/record"
 )
 
-// Use logger.Logger from shared logger package
 type Logger = logger.Logger
 
 type Actioner interface {
-	StepActor(ctx interface{}) error
-	AsyncHandler(ctx interface{}, resp interface{}) error
+	Handle(ctx interface{}) error
+}
+
+type AsyncActioner interface {
+	AsyncHandle(ctx interface{}, resp interface{}) error
 }
 
 // 最小执行单元
 type Step struct {
-	description string
-	name        string
-	isAsync     bool
-	execute     Actioner
+	name         string
+	description  string
+	timeout      time.Duration
+	execute      Actioner
+	asyncExecute AsyncActioner
 }
 
-func NewStep(name, description string, actor Actioner) *Step {
+func NewStep(name, description string, timeout time.Duration, actor Actioner, asyncActor AsyncActioner) *Step {
 	if actor == nil {
+		fmt.Println("Error: Actioner cannot be nil")
 		return nil
 	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
 	return &Step{
-		name:        name,
-		description: description,
-		execute:     actor,
+		name:         name,
+		description:  description,
+		timeout:      timeout,
+		execute:      actor,
+		asyncExecute: asyncActor,
+	}
+}
+
+func (s *Step) SetTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		s.timeout = timeout
 	}
 }
 
 func (s *Step) IsAsync() bool {
-	return s.isAsync
+	return s.asyncExecute != nil
 }
 
-func (s *Step) Run(ctx interface{}, rcder *record.Record, logger Logger) error {
+func (s *Step) Handle(ctx interface{}, rcder *record.Record, logger Logger) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
 
-	stepLogger := logger.With("step", s.name, "description", s.description, "isAsync", s.isAsync)
+	stepLogger := logger.With("step", s.name, "description", s.description, "isAsync", s.IsAsync())
 	stepLogger.Info("Starting step execution")
 
 	var err error
@@ -57,7 +74,7 @@ func (s *Step) Run(ctx interface{}, rcder *record.Record, logger Logger) error {
 			rcder.Status = "failed"
 			stepLogger.Error("Step execution failed", "error", err)
 		} else {
-			if s.isAsync {
+			if s.IsAsync() {
 				rcder.Status = "async_waiting"
 				stepLogger.Info("Step completed - waiting for async callback")
 			} else {
@@ -67,15 +84,14 @@ func (s *Step) Run(ctx interface{}, rcder *record.Record, logger Logger) error {
 		}
 	}()
 
-	// 超时处理 TODO
-	stepLogger.Debug("Executing step actor")
-	err = s.execute.StepActor(ctx)
+	stepLogger.Debug("Executing step actor with timeout", "timeout", s.timeout)
+	err = s.executeWithTimeout(ctx, stepLogger)
 
 	return err
 }
 
 // step 处理异步响应 (设置step给的自定义的函数)
-func (s *Step) AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+func (s *Step) AsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	stepLogger := logger.With("step", s.name, "description", s.description, "runningID", runningID)
 	stepLogger.Info("Handling async callback for step")
 
@@ -111,10 +127,65 @@ func (s *Step) AsyncHandler(ctx interface{}, resp interface{}, runningID string,
 		}
 	}()
 
-	stepLogger.Debug("Executing async handler")
-	err = s.execute.AsyncHandler(ctx, resp)
+	stepLogger.Debug("Executing async handler with timeout", "timeout", s.timeout)
+	err = s.executeAsyncWithTimeout(ctx, resp, stepLogger)
+
 }
 
 func (s *Step) StepsCount() int {
 	return 0
+}
+
+func (s *Step) executeWithTimeout(ctx interface{}, logger Logger) error {
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in step actor: %v", r)
+			}
+		}()
+		start := time.Now()
+		errChan <- s.execute.Handle(ctx)
+		duration := time.Since(start)
+		logger.Debug("Step actor execution time", "duration", duration)
+	}()
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-timeoutCtx.Done():
+		logger.Error("Step execution timeout", "timeout", s.timeout, "step", s.name)
+		return fmt.Errorf("step execution timeout after %v", s.timeout)
+	}
+}
+
+func (s *Step) executeAsyncWithTimeout(ctx interface{}, resp interface{}, logger Logger) error {
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+
+	errChan := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errChan <- fmt.Errorf("panic in async handler: %v", r)
+			}
+		}()
+		start := time.Now()
+		errChan <- s.asyncExecute.AsyncHandle(ctx, resp)
+		duration := time.Since(start)
+		logger.Debug("Async handler execution time", "duration", duration)
+	}()
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-timeoutCtx.Done():
+		logger.Error("Async handler execution timeout", "timeout", s.timeout, "step", s.name)
+		return fmt.Errorf("async handler execution timeout after %v", s.timeout)
+	}
 }

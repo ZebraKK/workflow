@@ -10,7 +10,7 @@ import (
 
 // 有可能嵌套的
 // 每一层都有超时设置
-func (t *Stage) serialRun(ctx interface{}, index int, rcder *record.Record, logger Logger) error {
+func (t *Stage) serialHandle(ctx interface{}, index int, rcder *record.Record, logger Logger) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
@@ -34,7 +34,7 @@ func (t *Stage) serialRun(ctx interface{}, index int, rcder *record.Record, logg
 		rcder.AddRecord(i, nextRecord)
 
 		stepLogger.Debug("Executing step")
-		err_ := stp.Run(ctx, nextRecord, stepLogger)
+		err_ := stp.Handle(ctx, nextRecord, stepLogger)
 		rcder.Status = nextRecord.Status
 		if err_ != nil {
 			err = err_
@@ -64,7 +64,7 @@ func (t *Stage) serialRun(ctx interface{}, index int, rcder *record.Record, logg
 
 // 调用step异步的回调处理, 根据结果, 继续task的执行
 // 状态回溯
-func (t *Stage) serialAsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+func (t *Stage) serialAsyncHandle(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	stageLogger := logger.With("stage", t.Name, "stageID", t.ID, "mode", "serial", "runningID", runningID)
 	stageLogger.Info("Handling async callback for serial stage")
 
@@ -84,7 +84,7 @@ func (t *Stage) serialAsyncHandler(ctx interface{}, resp interface{}, runningID 
 
 	nextRcrd := rcder.Records[index]
 	stepLogger.Debug("Calling step async handler")
-	stp.AsyncHandler(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
+	stp.AsyncHandle(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
 
 	// update current-level status
 	for _, r := range rcder.Records {
@@ -98,6 +98,6 @@ func (t *Stage) serialAsyncHandler(ctx interface{}, resp interface{}, runningID 
 	if index < len(t.Steps)-1 { //serial
 		// 继续执行后续步骤
 		stageLogger.Info("Continuing with next steps", "nextIndex", index+1)
-		t.serialRun(ctx, index+1, rcder, logger)
+		t.serialHandle(ctx, index+1, rcder, logger)
 	}
 }
