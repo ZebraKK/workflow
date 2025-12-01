@@ -7,13 +7,14 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"workflow/record"
 )
 
-var GlobalHash = sha256.New()
-var GlobalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+var globalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
+var globalRandMu sync.Mutex
 
 type Tasker interface {
 	IsAsync() bool
@@ -45,12 +46,13 @@ type AsyncJob struct {
 }
 
 func generateID(value string) string {
-	rdNum := GlobalRand.Int63()
+	globalRandMu.Lock()
+	rdNum := globalRand.Int63()
+	globalRandMu.Unlock()
 	value = value + strconv.FormatInt(rdNum, 10) + time.Now().String()
-	GlobalHash.Write([]byte(value))
-	hash := GlobalHash.Sum(nil)
+	hash := sha256.Sum256([]byte(value))
 
-	id := hex.EncodeToString(hash)
+	id := hex.EncodeToString(hash[:])
 	return id[:32]
 }
 
