@@ -4,34 +4,65 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"workflow/logger"
 )
 
-type Workflow struct {
-	pipelineMap map[string]*Pipeline // 管理pipeline
-	muPl        sync.RWMutex
-	jobsStore   map[string]*Job // 每次运行一个pipeline 会生成一个job。 存储
-	muJs        sync.RWMutex
+// Use logger.Logger from shared logger package
+type Logger = logger.Logger
 
-	workerNum int
-	JobCh     chan *Job //缓冲大小 = 峰值写入 QPS * 平均处理耗时（如峰值 1000 QPS,处理耗时 10ms,缓冲设为1000*0.01=10）；
-	quitJobCh chan struct{}
-	AsyncCh   chan *AsyncJob
-	logger    Logger
+// Re-export logger constructors for convenience
+var (
+	NewSlogLogger = logger.NewSlogLogger
+	NewTextLogger = logger.NewTextLogger
+	NewNoOpLogger = logger.NewNoOpLogger
+)
+
+type WorkflowConfig struct {
+	WorkerNum   int
+	JobChSize   int
+	AsyncChSize int
 }
 
-func NewWorkflow(logger Logger) *Workflow {
+type Workflow struct {
+	pipelineMap         map[string]*Pipeline // id -> pipeline
+	pipelineMapWithName map[string]string    // name -> id
+	muPl                sync.RWMutex
+	jobsStore           map[string]*Job // 每次运行一个pipeline 会生成一个job。 存储
+	muJs                sync.RWMutex
+
+	workerNum   int
+	JobCh       chan *Job //缓冲大小 = 峰值写入 QPS * 平均处理耗时（如峰值 1000 QPS,处理耗时 10ms,缓冲设为1000*0.01=10）；
+	quitJobCh   chan struct{}
+	quitAsyncCh chan struct{}
+	AsyncCh     chan *AsyncJob
+	logger      Logger
+}
+
+func NewWorkflow(logger Logger, cfg WorkflowConfig) *Workflow {
 	if logger == nil {
 		logger = NewNoOpLogger()
 	}
+	if cfg.WorkerNum <= 0 {
+		cfg.WorkerNum = 5
+	}
+	if cfg.JobChSize <= 0 {
+		cfg.JobChSize = 10
+	}
+	if cfg.AsyncChSize <= 0 {
+		cfg.AsyncChSize = 10
+	}
 
 	wf := &Workflow{
-		pipelineMap: make(map[string]*Pipeline),
-		jobsStore:   make(map[string]*Job),
-		workerNum:   5, // todo 配置化 or cpu*2
-		quitJobCh:   make(chan struct{}, 1),
-		JobCh:       make(chan *Job, 10),
-		AsyncCh:     make(chan *AsyncJob, 10),
-		logger:      logger,
+		pipelineMap:         make(map[string]*Pipeline),
+		pipelineMapWithName: make(map[string]string),
+		jobsStore:           make(map[string]*Job),
+		workerNum:           cfg.WorkerNum,
+		quitJobCh:           make(chan struct{}, 1),
+		quitAsyncCh:         make(chan struct{}, 1),
+		JobCh:               make(chan *Job, cfg.JobChSize),
+		AsyncCh:             make(chan *AsyncJob, cfg.AsyncChSize),
+		logger:              logger,
 	}
 
 	// load existing pipelines from store if needed
@@ -96,7 +127,7 @@ func (w *Workflow) runJob(job *Job) {
 	w.muJs.Unlock()
 	jobLogger.Debug("Job added to store")
 
-	err := job.Pipeline.task.Run(job.ctx, job.record)
+	err := job.Pipeline.task.Run(job.ctx, job.record, jobLogger)
 	if err != nil {
 		jobLogger.Error("Job execution failed", "error", err)
 		job.record.Status = "failed"
@@ -105,10 +136,10 @@ func (w *Workflow) runJob(job *Job) {
 	// update job 到db
 
 	// job 后续继续运行处理,如异步等待,失败重试等
-	state := job.record.Status
-	jobLogger.Info("Job completed", "status", state)
+	status := job.record.Status
+	jobLogger.Info("Job completed", "status", status)
 
-	switch state {
+	switch status {
 	case "async_waiting":
 		// 加入到异步等待任务记录中去即可。或者db化
 		// 不做任何操作，等待回调处理
@@ -122,13 +153,13 @@ func (w *Workflow) runJob(job *Job) {
 		jobLogger.Info("Job completed and removed from store")
 	case "failed":
 		// 失败处理，告警等
-		jobLogger.Error("Job failed", "recordStatus", state)
+		jobLogger.Error("Job failed", "recordStatus", status)
 		w.muJs.Lock()
 		delete(w.jobsStore, job.ID)
 		w.muJs.Unlock()
 	default:
 		// 其他状态处理
-		jobLogger.Warn("Job ended with unknown status", "status", state)
+		jobLogger.Warn("Job ended with unknown status", "status", status)
 	}
 }
 
@@ -160,7 +191,7 @@ func (w *Workflow) asyncJobStart() {
 						}()
 						w.runAsyncJob(job)
 					}()
-				case <-w.quitJobCh:
+				case <-w.quitAsyncCh:
 					w.logger.Info("Quit signal received, async worker exiting", "workerID", workerID)
 					return
 				}
@@ -195,7 +226,7 @@ func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 	stageIndex := 0 // 从第0个开始,递归调用
 	asyncLogger.Debug("Parsed running ID", "ids", ids, "stageIndex", stageIndex)
 
-	asyncJob.Job.Pipeline.task.AsyncHandler(asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record)
+	asyncJob.Job.Pipeline.task.AsyncHandler(asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record, asyncLogger)
 
 	// 运行结果决定后续job的处理, 放到retry,done,wait等队列
 	state := asyncJob.Job.record.Status
@@ -242,6 +273,7 @@ func (w *Workflow) Close() {
 	// 中断正在运行的任务
 	// Signal all workers to stop
 	close(w.quitJobCh)
+	close(w.quitAsyncCh)
 	w.logger.Debug("Quit signal sent to all workers")
 
 	// 释放资源

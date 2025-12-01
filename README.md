@@ -3,21 +3,21 @@
 
 ![](https://github.com/ZebraKK/workflow/workflows/Build/badge.svg)
 
-task
-    包含一组step
-    这一组串行执行,则为serialTask
-    这一组并行执行,则为parallelTask
-    若有更加复杂的任务，即既有串行又有并行，那么应该使用多个task 再组合成更大的task
+stage 
+    包含一组step 
+    这一组串行执行,则为serialTask 
+    这一组并行执行,则为parallelTask 
+    若有更加复杂的任务，即既有串行又有并行，那么应该使用多个task 再组合成更大的task 
 
-step
-    最小的运行单元
+step 
+    最小的运行单元 
 
 
-任务流可以
-    中断
-    重试
-    跳过
-    回滚
+任务流可以 
+    中断 
+    重试 
+    跳过 
+    回滚 
 
 ```
 设置文件, 保持LF换行
@@ -49,3 +49,15 @@ vscode 修改 tab转4空格
 # 递归查找所有 .go/.js/.md/.txt 文件（排除 Makefile），Tab 转 4 空格
 find . -type f \( -name "*.go" -o -name "*.js" -o -name "*.md" -o -name "*.txt" \) -not -name "Makefile" -exec sed -i.bak 's/\t/    /g' {} + && find . -name "*.bak" -delete
 ```
+
+
+github 格式参考文档：https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/quickstart-for-writing-on-github
+
+
+TODO 
+- 传递参数变量 
+- 响应也要变量 
+- 超时控制 
+- job 中断/重试/跳过
+
+

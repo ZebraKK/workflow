@@ -1,13 +1,17 @@
 package stage
 
 import (
+	"workflow/logger"
 	"workflow/record"
 )
 
+// Use logger.Logger from shared logger package
+type Logger = logger.Logger
+
 type steper interface {
 	IsAsync() bool
-	Run(ctx string, rcder *record.Record) error
-	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
+	Run(ctx string, rcder *record.Record, logger Logger) error
+	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 	StepsCount() int
 }
 
@@ -65,23 +69,23 @@ func (s *Stage) GetID() string {
 	return s.ID
 }
 
-func (s *Stage) Run(ctx string, rcder *record.Record) error {
+func (s *Stage) Run(ctx string, rcder *record.Record, logger Logger) error {
 	switch s.Mode {
 	case "serial":
-		return s.serialRun(ctx, 0, rcder) // start from index 0
+		return s.serialRun(ctx, 0, rcder, logger) // start from index 0
 	case "parallel":
-		return s.parallelRun(ctx, rcder)
+		return s.parallelRun(ctx, rcder, logger)
 	default:
 		return nil
 	}
 }
 
-func (s *Stage) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
+func (s *Stage) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	switch s.Mode {
 	case "serial":
-		s.serialAsyncHandler(resp, runningID, ids, stageIndex, rcder)
+		s.serialAsyncHandler(resp, runningID, ids, stageIndex, rcder, logger)
 	case "parallel":
-		s.parallelAsyncHandler(resp, runningID, ids, stageIndex, rcder)
+		s.parallelAsyncHandler(resp, runningID, ids, stageIndex, rcder, logger)
 	}
 }
 

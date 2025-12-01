@@ -16,8 +16,8 @@ var GlobalHash = sha256.New()
 var GlobalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 type Tasker interface {
-	Run(ctx string, rcder *record.Record) error
-	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
+	Run(ctx string, rcder *record.Record, logger Logger) error
+	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 	StepsCount() int
 }
 
@@ -61,7 +61,7 @@ func (w *Workflow) CreatePipeline(name string, t Tasker) error {
 
 	// check if pipeline with same ID exists
 	w.muPl.RLock()
-	_, exists := w.pipelineMap[name]
+	_, exists := w.pipelineMapWithName[name]
 	w.muPl.RUnlock()
 	if exists {
 		w.logger.Warn("CreatePipeline failed: duplicate pipeline name", "name", name)
@@ -78,6 +78,7 @@ func (w *Workflow) CreatePipeline(name string, t Tasker) error {
 	w.muPl.Lock()
 	defer w.muPl.Unlock()
 	w.pipelineMap[pl.ID] = pl
+	w.pipelineMapWithName[pl.Name] = pl.ID
 
 	w.logger.Info("Pipeline created", "name", name, "id", pl.ID)
 	return nil
@@ -87,6 +88,17 @@ func (w *Workflow) GetPipeline(id string) (*Pipeline, bool) {
 	w.muPl.RLock()
 	defer w.muPl.RUnlock()
 
+	pl, ok := w.pipelineMap[id]
+	return pl, ok
+}
+func (w *Workflow) GetPipelineByName(name string) (*Pipeline, bool) {
+	w.muPl.RLock()
+	defer w.muPl.RUnlock()
+
+	id, ok := w.pipelineMapWithName[name]
+	if !ok {
+		return nil, false
+	}
 	pl, ok := w.pipelineMap[id]
 	return pl, ok
 }
@@ -103,8 +115,26 @@ func (w *Workflow) DeletePipeline(id string) error {
 	w.muPl.Lock()
 	defer w.muPl.Unlock()
 	delete(w.pipelineMap, id)
+	delete(w.pipelineMapWithName, pl.Name)
 
 	w.logger.Info("Pipeline deleted", "name", pl.Name, "id", id)
+	return nil
+}
+func (w *Workflow) DeletePipelineByName(name string) error {
+	w.muPl.RLock()
+	id, exists := w.pipelineMapWithName[name]
+	w.muPl.RUnlock()
+	if !exists {
+		w.logger.Warn("DeletePipelineByName failed: pipeline not found", "name", name)
+		return errors.New("pipeline not found")
+	}
+
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
+	delete(w.pipelineMap, id)
+	delete(w.pipelineMapWithName, name)
+
+	w.logger.Info("Pipeline deleted", "name", name, "id", id)
 	return nil
 }
 
@@ -122,6 +152,22 @@ func (w *Workflow) UpdatePipeline(id string, t Tasker) error {
 	w.pipelineMap[id].task = t
 
 	w.logger.Info("Pipeline updated", "name", pl.Name, "id", id)
+	return nil
+}
+func (w *Workflow) UpdatePipelineByName(name string, t Tasker) error {
+	w.muPl.RLock()
+	id, exists := w.pipelineMapWithName[name]
+	w.muPl.RUnlock()
+	if !exists {
+		w.logger.Warn("UpdatePipelineByName failed: pipeline not found", "name", name)
+		return errors.New("pipeline not found")
+	}
+
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
+	w.pipelineMap[id].task = t
+
+	w.logger.Info("Pipeline updated", "name", name, "id", id)
 	return nil
 }
 
@@ -150,7 +196,7 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
 		ID:          generateID(pl.ID),
 		Pipeline:    plInstance,
 		ctx:         ctx,
-		description: "Job for pipeline " + id,
+		description: "Job for pipeline " + pl.Name,
 	}
 	job.record = record.NewRecord(job.ID, "", plInstance.task.StepsCount())
 
