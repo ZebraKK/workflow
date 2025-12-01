@@ -12,8 +12,8 @@ import (
 type Logger = logger.Logger
 
 type Actioner interface {
-	StepActor() error
-	AsyncHandler(resp string) error
+	StepActor(ctx interface{}) error
+	AsyncHandler(ctx interface{}, resp interface{}) error
 }
 
 // 最小执行单元
@@ -39,7 +39,7 @@ func (s *Step) IsAsync() bool {
 	return s.isAsync
 }
 
-func (s *Step) Run(ctx string, rcder *record.Record, logger Logger) error {
+func (s *Step) Run(ctx interface{}, rcder *record.Record, logger Logger) error {
 	if rcder == nil {
 		return errors.New("record is nil")
 	}
@@ -69,13 +69,13 @@ func (s *Step) Run(ctx string, rcder *record.Record, logger Logger) error {
 
 	// 超时处理 TODO
 	stepLogger.Debug("Executing step actor")
-	err = s.execute.StepActor()
+	err = s.execute.StepActor(ctx)
 
 	return err
 }
 
 // step 处理异步响应 (设置step给的自定义的函数)
-func (s *Step) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
+func (s *Step) AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger) {
 	stepLogger := logger.With("step", s.name, "description", s.description, "runningID", runningID)
 	stepLogger.Info("Handling async callback for step")
 
@@ -112,7 +112,7 @@ func (s *Step) AsyncHandler(resp string, runningID string, ids []int, stageIndex
 	}()
 
 	stepLogger.Debug("Executing async handler")
-	err = s.execute.AsyncHandler(resp)
+	err = s.execute.AsyncHandler(ctx, resp)
 }
 
 func (s *Step) StepsCount() int {

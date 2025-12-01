@@ -226,7 +226,7 @@ func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 	stageIndex := 0 // 从第0个开始,递归调用
 	asyncLogger.Debug("Parsed running ID", "ids", ids, "stageIndex", stageIndex)
 
-	asyncJob.Job.Pipeline.task.AsyncHandler(asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record, asyncLogger)
+	asyncJob.Job.Pipeline.task.AsyncHandler(asyncJob.Job.ctx, asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record, asyncLogger)
 
 	// 运行结果决定后续job的处理, 放到retry,done,wait等队列
 	state := asyncJob.Job.record.Status

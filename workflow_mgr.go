@@ -16,8 +16,8 @@ var GlobalHash = sha256.New()
 var GlobalRand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 type Tasker interface {
-	Run(ctx string, rcder *record.Record, logger Logger) error
-	AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
+	Run(ctx interface{}, rcder *record.Record, logger Logger) error
+	AsyncHandler(ctx interface{}, resp interface{}, runningID string, ids []int, stageIndex int, rcder *record.Record, logger Logger)
 	StepsCount() int
 }
 
@@ -33,13 +33,13 @@ type Job struct {
 	ID          string
 	Pipeline    Pipeline
 	description string
-	ctx         string
+	ctx         interface{}
 	record      *record.Record
 }
 
 type AsyncJob struct {
 	Job       *Job
-	Resp      string
+	Resp      interface{}
 	RunningID string
 }
 
@@ -182,7 +182,7 @@ func (w *Workflow) ListPipelines() []*Pipeline {
 	return pipelines
 }
 
-func (w *Workflow) LaunchPipeline(id string, ctx string) error {
+func (w *Workflow) LaunchPipeline(id string, ctx interface{}) error {
 	w.muPl.RLock()
 	pl, exists := w.pipelineMap[id]
 	w.muPl.RUnlock()
@@ -216,7 +216,7 @@ func (w *Workflow) LaunchPipeline(id string, ctx string) error {
 
 // 管理回调, 解析任务, 调用任务的AsyncHandler
 // 在并发的环境下调用
-func (w *Workflow) CallbackHandler(id string, resp string) error {
+func (w *Workflow) CallbackHandler(id string, resp interface{}) error {
 	if id == "" {
 		w.logger.Error("CallbackHandler failed: invalid id")
 		return errors.New("invalid id")

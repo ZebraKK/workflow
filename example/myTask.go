@@ -9,13 +9,21 @@ import (
 
 type myAction struct{}
 
-func (ma *myAction) StepActor() error {
+func (ma *myAction) StepActor(ctx interface{}) error {
+	// You can now use ctx to access custom parameters from the upper layer
+	// Example: if you pass a map[string]interface{} or a custom struct
 	fmt.Println("Executing Step 1: get data from API")
+	if ctx != nil {
+		fmt.Printf("Context received: %+v\n", ctx)
+	}
 	return nil
 }
 
-func (ma *myAction) AsyncHandler(resp string) error {
+func (ma *myAction) AsyncHandler(ctx interface{}, resp interface{}) error {
 	fmt.Println("Dealing with async response:", resp)
+	if ctx != nil {
+		fmt.Printf("Context in async handler: %+v\n", ctx)
+	}
 	return nil
 }
 
