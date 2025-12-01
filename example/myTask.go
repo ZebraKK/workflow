@@ -42,6 +42,7 @@ func NewMyTask() *stage.Stage {
 	mytask.AddStep(step2)
 
 	step3 := step.NewStep("step3", "Fourth step with 15s timeout", 15*time.Second, myaction, myaction)
+
 	mytask.AddStep(step3)
 
 	return mytask
