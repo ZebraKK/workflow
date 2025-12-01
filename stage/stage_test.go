@@ -2,48 +2,43 @@ package stage
 
 import (
 	"errors"
+	"log/slog"
 	"testing"
+	"time"
+
+	"workflow/logger"
 	"workflow/record"
+	"workflow/step"
 )
 
-// Mock steper for testing
-type MockSteper struct {
-	isAsync     bool
-	stepsCount  int
-	runFunc     func(ctx string, rcder *record.Record) error
-	asyncFunc   func(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record)
-	runCalled   bool
-	asyncCalled bool
+// Mock Actioner for testing
+type MockActioner struct {
+	handleFunc  func(ctx interface{}) error
+	handleError error
 }
 
-func (m *MockSteper) IsAsync() bool {
-	return m.isAsync
+func (m *MockActioner) Handle(ctx interface{}) error {
+	if m.handleFunc != nil {
+		return m.handleFunc(ctx)
+	}
+	return m.handleError
 }
 
-func (m *MockSteper) Run(ctx string, rcder *record.Record) error {
-	m.runCalled = true
-	if m.runFunc != nil {
-		return m.runFunc(ctx, rcder)
-	}
-	if rcder != nil {
-		rcder.Status = record.StatusDone
-	}
-	return nil
+// Mock AsyncActioner for testing
+type MockAsyncActioner struct {
+	asyncHandleFunc  func(ctx interface{}, resp interface{}) error
+	asyncHandleError error
 }
 
-func (m *MockSteper) AsyncHandler(resp string, runningID string, ids []int, stageIndex int, rcder *record.Record) {
-	m.asyncCalled = true
-	if m.asyncFunc != nil {
-		m.asyncFunc(resp, runningID, ids, stageIndex, rcder)
+func (m *MockAsyncActioner) AsyncHandle(ctx interface{}, resp interface{}) error {
+	if m.asyncHandleFunc != nil {
+		return m.asyncHandleFunc(ctx, resp)
 	}
-	if rcder != nil && rcder.AsyncRecord != nil {
-		rcder.AsyncRecord.Status = record.StatusDone
-	}
+	return m.asyncHandleError
 }
 
-func (m *MockSteper) StepsCount() int {
-	return m.stepsCount
-}
+var noOpLogger = logger.NewNoOpLogger()
+var slogger = logger.NewSlogLogger(slog.LevelDebug)
 
 // Test NewStage
 func TestNewStage(t *testing.T) {
@@ -61,7 +56,7 @@ func TestNewStage(t *testing.T) {
 			stageName: "test-stage",
 			id:        "custom-id",
 			mode:      "serial",
-			step:      &MockSteper{stepsCount: 3},
+			step:      step.NewStep("step1", "Test Step", 5*time.Second, &MockActioner{}, nil),
 			wantNil:   false,
 			wantID:    "custom-id",
 		},
@@ -70,7 +65,7 @@ func TestNewStage(t *testing.T) {
 			stageName: "test-stage",
 			id:        "",
 			mode:      "parallel",
-			step:      &MockSteper{stepsCount: 2},
+			step:      step.NewStep("step2", "Test Step 2", 5*time.Second, &MockActioner{}, nil),
 			wantNil:   false,
 			wantID:    "test-stage",
 		},
@@ -120,13 +115,15 @@ func TestNewStage(t *testing.T) {
 
 // Test AddStep
 func TestAddStep(t *testing.T) {
-	stage := NewStage("test", "id", "serial", &MockSteper{})
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, &MockActioner{}, nil)
+	stage := NewStage("test", "id", "serial", stp1)
 
 	if len(stage.Steps) != 1 {
 		t.Errorf("Initial steps count = %d, want 1", len(stage.Steps))
 	}
 
-	stage.AddStep(&MockSteper{isAsync: false})
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, &MockActioner{}, nil)
+	stage.AddStep(stp2)
 	if len(stage.Steps) != 2 {
 		t.Errorf("After adding step, count = %d, want 2", len(stage.Steps))
 	}
@@ -135,7 +132,8 @@ func TestAddStep(t *testing.T) {
 		t.Error("Stage should not be async")
 	}
 
-	stage.AddStep(&MockSteper{isAsync: true})
+	stp3 := step.NewStep("step3", "Async Step", 5*time.Second, &MockActioner{}, &MockAsyncActioner{})
+	stage.AddStep(stp3)
 	if !stage.IsAsync() {
 		t.Error("Stage should be async after adding async step")
 	}
@@ -150,12 +148,12 @@ func TestIsAsync(t *testing.T) {
 	}{
 		{
 			name: "sync step",
-			step: &MockSteper{isAsync: false},
+			step: step.NewStep("step1", "Sync Step", 5*time.Second, &MockActioner{}, nil),
 			want: false,
 		},
 		{
 			name: "async step",
-			step: &MockSteper{isAsync: true},
+			step: step.NewStep("step2", "Async Step", 5*time.Second, &MockActioner{}, &MockAsyncActioner{}),
 			want: true,
 		},
 	}
@@ -172,14 +170,17 @@ func TestIsAsync(t *testing.T) {
 
 // Test StepsCount
 func TestStepsCount(t *testing.T) {
-	stage := NewStage("test", "", "serial", &MockSteper{})
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, &MockActioner{}, nil)
+	stage := NewStage("test", "", "serial", stp1)
 
 	if stage.StepsCount() != 1 {
 		t.Errorf("StepsCount() = %d, want 1", stage.StepsCount())
 	}
 
-	stage.AddStep(&MockSteper{})
-	stage.AddStep(&MockSteper{})
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, &MockActioner{}, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, &MockActioner{}, nil)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	if stage.StepsCount() != 3 {
 		t.Errorf("StepsCount() = %d, want 3", stage.StepsCount())
@@ -188,7 +189,8 @@ func TestStepsCount(t *testing.T) {
 
 // Test GetName and GetID
 func TestGetters(t *testing.T) {
-	stage := NewStage("my-stage", "my-id", "serial", &MockSteper{})
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, &MockActioner{}, nil)
+	stage := NewStage("my-stage", "my-id", "serial", stp)
 
 	if stage.GetName() != "my-stage" {
 		t.Errorf("GetName() = %v, want my-stage", stage.GetName())
@@ -199,22 +201,16 @@ func TestGetters(t *testing.T) {
 	}
 }
 
-// Test Run - Serial Mode
-func TestRun_Serial(t *testing.T) {
-	step := &MockSteper{
-		isAsync:    false,
-		stepsCount: 0,
-	}
-	stage := NewStage("test", "", "serial", step)
+// Test Handle - Serial Mode
+func TestHandle_Serial(t *testing.T) {
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stage := NewStage("test", "", "serial", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
-	}
-
-	if !step.runCalled {
-		t.Error("Step.Run() was not called")
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
 
 	if rcder.Status != record.StatusDone {
@@ -222,136 +218,136 @@ func TestRun_Serial(t *testing.T) {
 	}
 }
 
-// Test Run - Parallel Mode
-func TestRun_Parallel(t *testing.T) {
-	step := &MockSteper{
-		isAsync:    false,
-		stepsCount: 0,
-	}
-	stage := NewStage("test", "", "parallel", step)
+// Test Handle - Parallel Mode
+func TestHandle_Parallel(t *testing.T) {
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stage := NewStage("test", "", "parallel", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
-	}
-
-	if !step.runCalled {
-		t.Error("Step.Run() was not called")
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
 }
 
-// Test Run - Unknown Mode
-func TestRun_UnknownMode(t *testing.T) {
-	step := &MockSteper{stepsCount: 0}
-	stage := NewStage("test", "", "unknown", step)
+// Test Handle - Unknown Mode
+func TestHandle_UnknownMode(t *testing.T) {
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stage := NewStage("test", "", "unknown", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 	if err != nil {
-		t.Errorf("Run() with unknown mode should not error, got %v", err)
+		t.Errorf("Handle() with unknown mode should not error, got %v", err)
 	}
 }
 
-// Test Serial Run - Multiple Steps
-func TestSerialRun_MultipleSteps(t *testing.T) {
-	step1 := &MockSteper{stepsCount: 0}
-	step2 := &MockSteper{stepsCount: 0}
-	step3 := &MockSteper{stepsCount: 0}
+// Test Serial Handle - Multiple Steps
+func TestSerialHandle_MultipleSteps(t *testing.T) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{}
+	actor3 := &MockActioner{}
 
-	stage := NewStage("test", "", "serial", step1)
-	stage.AddStep(step2)
-	stage.AddStep(step3)
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, actor3, nil)
+
+	stage := NewStage("test", "", "serial", stp1)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	rcder := record.NewRecord("test-0", "", 3)
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
 
-	if !step1.runCalled || !step2.runCalled || !step3.runCalled {
-		t.Error("Not all steps were called")
+	if rcder.Status != record.StatusDone {
+		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusDone)
 	}
 }
 
-// Test Serial Run - Step Failure
-func TestSerialRun_StepFailure(t *testing.T) {
-	step1 := &MockSteper{stepsCount: 0}
-	step2 := &MockSteper{
-		stepsCount: 0,
-		runFunc: func(ctx string, rcder *record.Record) error {
-			rcder.Status = record.StatusFailed
-			return errors.New("step failed")
-		},
-	}
-	step3 := &MockSteper{stepsCount: 0}
+// Test Serial Handle - Step Failure
+func TestSerialHandle_StepFailure(t *testing.T) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{handleError: errors.New("step failed")}
+	actor3 := &MockActioner{}
 
-	stage := NewStage("test", "", "serial", step1)
-	stage.AddStep(step2)
-	stage.AddStep(step3)
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, actor3, nil)
+
+	stage := NewStage("test", "", "serial", stp1)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	rcder := record.NewRecord("test-0", "", 3)
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 
 	if err == nil {
-		t.Error("Run() should return error when step fails")
+		t.Error("Handle() should return error when step fails")
 	}
 
-	if step3.runCalled {
-		t.Error("Step 3 should not be called after step 2 fails")
+	if rcder.Status != record.StatusFailed {
+		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusFailed)
 	}
 }
 
-// Test Serial Run - Nil Record
-func TestSerialRun_NilRecord(t *testing.T) {
-	step := &MockSteper{stepsCount: 0}
-	stage := NewStage("test", "", "serial", step)
+// Test Serial Handle - Nil Record
+func TestSerialHandle_NilRecord(t *testing.T) {
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stage := NewStage("test", "", "serial", stp)
 
-	err := stage.Run("context", nil)
+	err := stage.Handle("context", nil, noOpLogger)
 	if err == nil {
-		t.Error("Run() should return error for nil record")
+		t.Error("Handle() should return error for nil record")
 	}
 	if err.Error() != "record is nil" {
-		t.Errorf("Run() error = %v, want 'record is nil'", err)
+		t.Errorf("Handle() error = %v, want 'record is nil'", err)
 	}
 }
 
-// Test Parallel Run - Multiple Steps
-func TestParallelRun_MultipleSteps(t *testing.T) {
-	step1 := &MockSteper{stepsCount: 0}
-	step2 := &MockSteper{stepsCount: 0}
-	step3 := &MockSteper{stepsCount: 0}
+// Test Parallel Handle - Multiple Steps
+func TestParallelHandle_MultipleSteps(t *testing.T) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{}
+	actor3 := &MockActioner{}
 
-	stage := NewStage("test", "", "parallel", step1)
-	stage.AddStep(step2)
-	stage.AddStep(step3)
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, actor3, nil)
+
+	stage := NewStage("test", "", "parallel", stp1)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	rcder := record.NewRecord("test-0", "", 3)
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
 
-	// All steps should be called (eventually, after goroutines complete)
-	if !step1.runCalled || !step2.runCalled || !step3.runCalled {
-		t.Error("Not all steps were called in parallel execution")
+	if rcder.Status != record.StatusDone {
+		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusDone)
 	}
 }
 
-// Test Parallel Run - With Async Step
-func TestParallelRun_AsyncStep(t *testing.T) {
-	step := &MockSteper{
-		isAsync:    true,
-		stepsCount: 0,
-	}
-	stage := NewStage("test", "", "parallel", step)
+// Test Parallel Handle - With Async Step
+func TestParallelHandle_AsyncStep(t *testing.T) {
+	actor := &MockActioner{}
+	asyncActor := &MockAsyncActioner{}
+	stp := step.NewStep("step1", "Async Step", 5*time.Second, actor, asyncActor)
+	stage := NewStage("test", "", "parallel", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
 
 	if rcder.Status != record.StatusAsyncWaiting {
@@ -360,25 +356,22 @@ func TestParallelRun_AsyncStep(t *testing.T) {
 	}
 }
 
-// Test Parallel Run - Step Failure
-func TestParallelRun_StepFailure(t *testing.T) {
-	step1 := &MockSteper{stepsCount: 0}
-	step2 := &MockSteper{
-		stepsCount: 0,
-		runFunc: func(ctx string, rcder *record.Record) error {
-			rcder.Status = record.StatusFailed
-			return errors.New("step failed")
-		},
-	}
+// Test Parallel Handle - Step Failure
+func TestParallelHandle_StepFailure(t *testing.T) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{handleError: errors.New("step failed")}
 
-	stage := NewStage("test", "", "parallel", step1)
-	stage.AddStep(step2)
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+
+	stage := NewStage("test", "", "parallel", stp1)
+	stage.AddStep(stp2)
 
 	rcder := record.NewRecord("test-0", "", 2)
-	err := stage.Run("context", rcder)
+	err := stage.Handle("context", rcder, noOpLogger)
 
 	if err == nil {
-		t.Error("Run() should return error when a step fails")
+		t.Error("Handle() should return error when a step fails")
 	}
 
 	if rcder.Status != record.StatusFailed {
@@ -386,70 +379,85 @@ func TestParallelRun_StepFailure(t *testing.T) {
 	}
 }
 
-// Test AsyncHandler - Serial
-func TestAsyncHandler_Serial(t *testing.T) {
-	step := &MockSteper{
-		isAsync:    true,
-		stepsCount: 0,
-	}
-	stage := NewStage("test", "", "serial", step)
+// Test AsyncHandle - Serial
+func TestAsyncHandle_Serial(t *testing.T) {
+	actor := &MockActioner{}
+	asyncActor := &MockAsyncActioner{}
+	stp := step.NewStep("step1", "Async Step", 5*time.Second, actor, asyncActor)
+	stage := NewStage("test", "", "serial", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 	rcder.AddRecord(0, record.NewRecord("test-0", "0", 0))
 
-	stage.AsyncHandler("response", "test-0-1", []int{0}, 0, rcder)
+	stage.AsyncHandle("context", "response", "test-0-1", []int{0}, 0, rcder, noOpLogger)
 
-	if !step.asyncCalled {
-		t.Error("Step.AsyncHandler() was not called")
+	// AsyncHandle should update the async record status
+	if rcder.Records[0].AsyncRecord == nil {
+		t.Error("AsyncRecord should be created")
 	}
 }
 
-// Test AsyncHandler - Parallel
-func TestAsyncHandler_Parallel(t *testing.T) {
-	step := &MockSteper{
-		isAsync:    true,
-		stepsCount: 0,
-	}
-	stage := NewStage("test", "", "parallel", step)
+// Test AsyncHandle - Parallel
+func TestAsyncHandle_Parallel(t *testing.T) {
+	actor := &MockActioner{}
+	asyncActor := &MockAsyncActioner{}
+	stp := step.NewStep("step1", "Async Step", 5*time.Second, actor, asyncActor)
+	stage := NewStage("test", "", "parallel", stp)
 	rcder := record.NewRecord("test-0", "", 1)
 	rcder.AddRecord(0, record.NewRecord("test-0", "0", 0))
 
-	stage.AsyncHandler("response", "test-0-1", []int{0}, 0, rcder)
+	stage.AsyncHandle("context", "response", "test-0-1", []int{0}, 0, rcder, slogger)
 
-	if !step.asyncCalled {
-		t.Error("Step.AsyncHandler() was not called")
+	// AsyncHandle should update the async record status
+	if rcder.Records[0].AsyncRecord == nil {
+		t.Error("AsyncRecord should be created")
 	}
 }
 
 // Benchmark tests
 func BenchmarkNewStage(b *testing.B) {
-	step := &MockSteper{stepsCount: 3}
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
 	for i := 0; i < b.N; i++ {
-		NewStage("test-stage", "id", "serial", step)
+		NewStage("test-stage", "id", "serial", stp)
 	}
 }
 
-func BenchmarkSerialRun(b *testing.B) {
-	step := &MockSteper{stepsCount: 0}
-	stage := NewStage("test", "", "serial", step)
-	stage.AddStep(&MockSteper{stepsCount: 0})
-	stage.AddStep(&MockSteper{stepsCount: 0})
+func BenchmarkSerialHandle(b *testing.B) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{}
+	actor3 := &MockActioner{}
+
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, actor3, nil)
+
+	stage := NewStage("test", "", "serial", stp1)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rcder := record.NewRecord("test-0", "", 3)
-		stage.Run("context", rcder)
+		stage.Handle("context", rcder, noOpLogger)
 	}
 }
 
-func BenchmarkParallelRun(b *testing.B) {
-	step := &MockSteper{stepsCount: 0}
-	stage := NewStage("test", "", "parallel", step)
-	stage.AddStep(&MockSteper{stepsCount: 0})
-	stage.AddStep(&MockSteper{stepsCount: 0})
+func BenchmarkParallelHandle(b *testing.B) {
+	actor1 := &MockActioner{}
+	actor2 := &MockActioner{}
+	actor3 := &MockActioner{}
+
+	stp1 := step.NewStep("step1", "Step 1", 5*time.Second, actor1, nil)
+	stp2 := step.NewStep("step2", "Step 2", 5*time.Second, actor2, nil)
+	stp3 := step.NewStep("step3", "Step 3", 5*time.Second, actor3, nil)
+
+	stage := NewStage("test", "", "parallel", stp1)
+	stage.AddStep(stp2)
+	stage.AddStep(stp3)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rcder := record.NewRecord("test-0", "", 3)
-		stage.Run("context", rcder)
+		stage.Handle("context", rcder, noOpLogger)
 	}
 }

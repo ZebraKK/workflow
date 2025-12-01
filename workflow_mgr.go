@@ -97,6 +97,8 @@ func (w *Workflow) GetPipelineByName(name string) (*Pipeline, bool) {
 
 	id, ok := w.pipelineMapWithName[name]
 	if !ok {
+		w.logger.Warn("GetPipelineByName failed: pipeline not found", "name", name)
+		w.logger.Debug("Available pipelines", "pipelines", w.pipelineMapWithName)
 		return nil, false
 	}
 	pl, ok := w.pipelineMap[id]

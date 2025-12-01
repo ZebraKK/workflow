@@ -101,7 +101,8 @@ func (s *Step) AsyncHandle(ctx interface{}, resp interface{}, runningID string, 
 	}
 
 	// 递归终止条件, step 是最终的执行单元,可以不用考虑递归继续嵌套
-	if stageIndex >= len(ids) {
+	// stageIndex 需要减1 判断，step是最后一步，属于当前stage, stageIndex加1 是为了下一个stage准备的
+	if stageIndex-1 >= len(ids) {
 		stepLogger.Debug("AsyncHandler terminated - stage index out of bounds", "stageIndex", stageIndex, "idsLen", len(ids))
 		return
 	}

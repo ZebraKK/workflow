@@ -59,5 +59,5 @@ TODO
 - 响应也要变量 
 - 超时控制 
 - job 中断/重试/跳过
-
+- pipeline/job 的map管理
 

@@ -2,8 +2,12 @@ package step
 
 import (
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
+
+	"workflow/logger"
 	"workflow/record"
 )
 
@@ -11,50 +15,78 @@ import (
 
 // MockSuccessActioner always succeeds
 type MockSuccessActioner struct {
-	stepCalled  bool
-	asyncCalled bool
+	handleCalled bool
+	lastCtx      interface{}
 }
 
-func (m *MockSuccessActioner) StepActor() error {
-	m.stepCalled = true
+func (m *MockSuccessActioner) Handle(ctx interface{}) error {
+	m.handleCalled = true
+	m.lastCtx = ctx
 	return nil
 }
 
-func (m *MockSuccessActioner) AsyncHandler(resp string) error {
-	m.asyncCalled = true
+// MockSuccessAsyncActioner always succeeds
+type MockSuccessAsyncActioner struct {
+	asyncHandleCalled bool
+	lastCtx           interface{}
+	lastResp          interface{}
+}
+
+func (m *MockSuccessAsyncActioner) AsyncHandle(ctx interface{}, resp interface{}) error {
+	m.asyncHandleCalled = true
+	m.lastCtx = ctx
+	m.lastResp = resp
 	return nil
 }
 
 // MockFailActioner always fails
 type MockFailActioner struct {
-	stepError  error
-	asyncError error
+	handleError error
 }
 
-func (m *MockFailActioner) StepActor() error {
-	return m.stepError
+func (m *MockFailActioner) Handle(ctx interface{}) error {
+	return m.handleError
 }
 
-func (m *MockFailActioner) AsyncHandler(resp string) error {
-	return m.asyncError
+// MockFailAsyncActioner always fails
+type MockFailAsyncActioner struct {
+	asyncHandleError error
+}
+
+func (m *MockFailAsyncActioner) AsyncHandle(ctx interface{}, resp interface{}) error {
+	return m.asyncHandleError
+}
+
+// MockSlowActioner simulates slow execution
+type MockSlowActioner struct {
+	delay time.Duration
+}
+
+func (m *MockSlowActioner) Handle(ctx interface{}) error {
+	time.Sleep(m.delay)
+	return nil
 }
 
 // MockConfigurableActioner allows configuration of behavior
 type MockConfigurableActioner struct {
-	stepFunc  func() error
-	asyncFunc func(string) error
+	handleFunc func(ctx interface{}) error
 }
 
-func (m *MockConfigurableActioner) StepActor() error {
-	if m.stepFunc != nil {
-		return m.stepFunc()
+func (m *MockConfigurableActioner) Handle(ctx interface{}) error {
+	if m.handleFunc != nil {
+		return m.handleFunc(ctx)
 	}
 	return nil
 }
 
-func (m *MockConfigurableActioner) AsyncHandler(resp string) error {
-	if m.asyncFunc != nil {
-		return m.asyncFunc(resp)
+// MockConfigurableAsyncActioner allows configuration of async behavior
+type MockConfigurableAsyncActioner struct {
+	asyncHandleFunc func(ctx interface{}, resp interface{}) error
+}
+
+func (m *MockConfigurableAsyncActioner) AsyncHandle(ctx interface{}, resp interface{}) error {
+	if m.asyncHandleFunc != nil {
+		return m.asyncHandleFunc(ctx, resp)
 	}
 	return nil
 }
@@ -66,35 +98,52 @@ func TestNewStep(t *testing.T) {
 		name        string
 		stepName    string
 		description string
+		timeout     time.Duration
 		actor       Actioner
+		asyncActor  AsyncActioner
 		wantNil     bool
 	}{
 		{
-			name:        "valid step creation",
+			name:        "valid sync step",
 			stepName:    "test-step",
-			description: "Test Step Description",
+			description: "Test Step",
+			timeout:     5 * time.Second,
 			actor:       &MockSuccessActioner{},
+			asyncActor:  nil,
+			wantNil:     false,
+		},
+		{
+			name:        "valid async step",
+			stepName:    "test-async-step",
+			description: "Test Async Step",
+			timeout:     10 * time.Second,
+			actor:       &MockSuccessActioner{},
+			asyncActor:  &MockSuccessAsyncActioner{},
 			wantNil:     false,
 		},
 		{
 			name:        "nil actor",
 			stepName:    "test-step",
-			description: "Test Step",
+			description: "Test",
+			timeout:     5 * time.Second,
 			actor:       nil,
+			asyncActor:  nil,
 			wantNil:     true,
 		},
 		{
-			name:        "empty name and description",
-			stepName:    "",
-			description: "",
+			name:        "zero timeout gets default",
+			stepName:    "test-step",
+			description: "Test",
+			timeout:     0,
 			actor:       &MockSuccessActioner{},
+			asyncActor:  nil,
 			wantNil:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			step := NewStep(tt.stepName, tt.description, tt.actor)
+			step := NewStep(tt.stepName, tt.description, tt.timeout, tt.actor, tt.asyncActor)
 			if tt.wantNil {
 				if step != nil {
 					t.Errorf("NewStep() should return nil for nil actor, got %v", step)
@@ -109,9 +158,6 @@ func TestNewStep(t *testing.T) {
 				if step.description != tt.description {
 					t.Errorf("NewStep() description = %v, want %v", step.description, tt.description)
 				}
-				if step.execute == nil {
-					t.Error("NewStep() execute should not be nil")
-				}
 			}
 		})
 	}
@@ -119,29 +165,25 @@ func TestNewStep(t *testing.T) {
 
 func TestIsAsync(t *testing.T) {
 	tests := []struct {
-		name    string
-		isAsync bool
-		want    bool
+		name       string
+		asyncActor AsyncActioner
+		want       bool
 	}{
 		{
-			name:    "synchronous step",
-			isAsync: false,
-			want:    false,
+			name:       "synchronous step",
+			asyncActor: nil,
+			want:       false,
 		},
 		{
-			name:    "asynchronous step",
-			isAsync: true,
-			want:    true,
+			name:       "asynchronous step",
+			asyncActor: &MockSuccessAsyncActioner{},
+			want:       true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			step := &Step{
-				name:    "test",
-				isAsync: tt.isAsync,
-				execute: &MockSuccessActioner{},
-			}
+			step := NewStep("test", "test", 5*time.Second, &MockSuccessActioner{}, tt.asyncActor)
 			if got := step.IsAsync(); got != tt.want {
 				t.Errorf("IsAsync() = %v, want %v", got, tt.want)
 			}
@@ -149,21 +191,24 @@ func TestIsAsync(t *testing.T) {
 	}
 }
 
-func TestStepRun_Success_Sync(t *testing.T) {
+func TestStepHandle_Success_Sync(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = false
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 	startTime := time.Now().UnixMilli()
 
-	err := step.Run("ctx", rcder)
+	err := step.Handle("test-ctx", rcder, testLogger)
 
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
-	if !actor.stepCalled {
-		t.Error("StepActor was not called")
+	if !actor.handleCalled {
+		t.Error("Handle was not called")
+	}
+	if actor.lastCtx != "test-ctx" {
+		t.Errorf("Context not passed correctly, got %v", actor.lastCtx)
 	}
 	if rcder.Status != record.StatusDone {
 		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusDone)
@@ -176,109 +221,106 @@ func TestStepRun_Success_Sync(t *testing.T) {
 	}
 }
 
-func TestStepRun_Success_Async(t *testing.T) {
+func TestStepHandle_Success_Async(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	asyncActor := &MockSuccessAsyncActioner{}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, asyncActor)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 
-	err := step.Run("ctx", rcder)
+	err := step.Handle("test-ctx", rcder, testLogger)
 
 	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+		t.Errorf("Handle() error = %v, want nil", err)
 	}
-	if !actor.stepCalled {
-		t.Error("StepActor was not called")
+	if !actor.handleCalled {
+		t.Error("Handle was not called")
 	}
 	if rcder.Status != record.StatusAsyncWaiting {
 		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusAsyncWaiting)
 	}
 }
 
-func TestStepRun_Failure(t *testing.T) {
+func TestStepHandle_Failure(t *testing.T) {
 	expectedErr := errors.New("step execution failed")
-	actor := &MockFailActioner{
-		stepError: expectedErr,
-	}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = false
+	actor := &MockFailActioner{handleError: expectedErr}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 
-	err := step.Run("ctx", rcder)
+	err := step.Handle("test-ctx", rcder, testLogger)
 
 	if err == nil {
-		t.Error("Run() should return error")
+		t.Error("Handle() should return error")
 	}
-	if err != expectedErr {
-		t.Errorf("Run() error = %v, want %v", err, expectedErr)
+	if !strings.Contains(err.Error(), "step execution failed") {
+		t.Errorf("Handle() error = %v, want error containing 'step execution failed'", err)
 	}
 	if rcder.Status != record.StatusFailed {
 		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusFailed)
 	}
 }
 
-func TestStepRun_NilRecord(t *testing.T) {
+func TestStepHandle_NilRecord(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
+	testLogger := logger.NewNoOpLogger()
 
-	err := step.Run("ctx", nil)
+	err := step.Handle("test-ctx", nil, testLogger)
 
 	if err == nil {
-		t.Error("Run() should return error for nil record")
+		t.Error("Handle() should return error for nil record")
 	}
 	if err.Error() != "record is nil" {
-		t.Errorf("Run() error = %v, want 'record is nil'", err)
+		t.Errorf("Handle() error = %v, want 'record is nil'", err)
 	}
-	if actor.stepCalled {
-		t.Error("StepActor should not be called when record is nil")
+	if actor.handleCalled {
+		t.Error("Handle should not be called when record is nil")
 	}
 }
 
-func TestStepRun_TimestampOrder(t *testing.T) {
-	// Use a slow actor to ensure time passes
-	actor := &MockConfigurableActioner{
-		stepFunc: func() error {
-			time.Sleep(10 * time.Millisecond)
-			return nil
-		},
-	}
-	step := NewStep("test-step", "Test", actor)
+func TestStepHandle_Timeout(t *testing.T) {
+	// Create actor that takes longer than timeout
+	actor := &MockSlowActioner{delay: 200 * time.Millisecond}
+	step := NewStep("test-step", "Test", 100*time.Millisecond, actor, nil)
 
 	rcder := record.NewRecord("test-0", "", 0)
-	beforeRun := time.Now().UnixMilli()
+	testLogger := logger.NewNoOpLogger()
 
-	err := step.Run("ctx", rcder)
+	err := step.Handle("test-ctx", rcder, testLogger)
 
-	afterRun := time.Now().UnixMilli()
-
-	if err != nil {
-		t.Errorf("Run() error = %v, want nil", err)
+	if err == nil {
+		t.Error("Handle() should return timeout error")
 	}
-	if rcder.StartAt < beforeRun {
-		t.Error("StartAt should be >= time before run")
+	if !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("Handle() error = %v, should contain 'timeout'", err)
 	}
-	if rcder.EndAt > afterRun {
-		t.Error("EndAt should be <= time after run")
-	}
-	if rcder.EndAt < rcder.StartAt {
-		t.Error("EndAt should be >= StartAt")
+	if rcder.Status != record.StatusFailed {
+		t.Errorf("Record status = %v, want %v", rcder.Status, record.StatusFailed)
 	}
 }
 
-func TestAsyncHandler_Success(t *testing.T) {
+func TestAsyncHandle_Success(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	asyncActor := &MockSuccessAsyncActioner{}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, asyncActor)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 	ids := []int{0, 1, 2}
 
-	step.AsyncHandler("response-data", "test-0-1", ids, 2, rcder)
+	step.AsyncHandle("test-ctx", "response-data", "test-0-1", ids, 2, rcder, testLogger)
 
-	if !actor.asyncCalled {
-		t.Error("AsyncHandler of actor was not called")
+	if !asyncActor.asyncHandleCalled {
+		t.Error("AsyncHandle of actor was not called")
+	}
+	if asyncActor.lastCtx != "test-ctx" {
+		t.Errorf("Context not passed correctly, got %v", asyncActor.lastCtx)
+	}
+	if asyncActor.lastResp != "response-data" {
+		t.Errorf("Response not passed correctly, got %v", asyncActor.lastResp)
 	}
 	if rcder.AsyncRecord == nil {
 		t.Error("AsyncRecord should be created")
@@ -288,18 +330,17 @@ func TestAsyncHandler_Success(t *testing.T) {
 	}
 }
 
-func TestAsyncHandler_Failure(t *testing.T) {
+func TestAsyncHandle_Failure(t *testing.T) {
 	expectedErr := errors.New("async handler failed")
-	actor := &MockFailActioner{
-		asyncError: expectedErr,
-	}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	actor := &MockSuccessActioner{}
+	asyncActor := &MockFailAsyncActioner{asyncHandleError: expectedErr}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, asyncActor)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 	ids := []int{0, 1, 2}
 
-	step.AsyncHandler("response-data", "test-0-1", ids, 2, rcder)
+	step.AsyncHandle("test-ctx", "response-data", "test-0-1", ids, 2, rcder, testLogger)
 
 	if rcder.AsyncRecord == nil {
 		t.Error("AsyncRecord should be created even on failure")
@@ -309,113 +350,66 @@ func TestAsyncHandler_Failure(t *testing.T) {
 	}
 }
 
-func TestAsyncHandler_NilRecord(t *testing.T) {
+func TestAsyncHandle_NilRecord(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	asyncActor := &MockSuccessAsyncActioner{}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, asyncActor)
+	testLogger := logger.NewNoOpLogger()
 
 	// Should not panic
-	step.AsyncHandler("response", "test-0-1", []int{0}, 1, nil)
+	step.AsyncHandle("test-ctx", "response", "test-0-1", []int{0}, 1, nil, testLogger)
 
-	if actor.asyncCalled {
-		t.Error("AsyncHandler should not be called when record is nil")
+	if asyncActor.asyncHandleCalled {
+		t.Error("AsyncHandle should not be called when record is nil")
 	}
 }
 
-func TestAsyncHandler_TerminationCondition(t *testing.T) {
+func TestAsyncHandle_TerminationCondition(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	asyncActor := &MockSuccessAsyncActioner{}
+	step := NewStep("test-step", "Test", 5*time.Second, actor, asyncActor)
 
 	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewSlogLogger(slog.LevelDebug)
 	ids := []int{0, 1}
 
 	// stageIndex >= len(ids) should terminate early
-	step.AsyncHandler("response", "test-0-1", ids, 2, rcder)
+	step.AsyncHandle("test-ctx", "response", "test-0-1", ids, 3, rcder, testLogger)
 
-	// AsyncRecord should NOT be created because early termination happens before creation
 	if rcder.AsyncRecord != nil {
 		t.Error("AsyncRecord should not be created due to early termination")
 	}
-	if actor.asyncCalled {
-		t.Error("AsyncHandler should not be called due to early termination")
+	if asyncActor.asyncHandleCalled {
+		t.Error("AsyncHandle should not be called due to early termination")
 	}
 }
 
-func TestAsyncHandler_ExactTerminationBoundary(t *testing.T) {
+func TestSetTimeout(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
 
-	rcder := record.NewRecord("test-0", "", 0)
-	ids := []int{0}
+	step.SetTimeout(10 * time.Second)
 
-	// stageIndex = 1, len(ids) = 1, so 1 >= 1 is true - early termination
-	step.AsyncHandler("response", "test-0-1", ids, 1, rcder)
-
-	if rcder.AsyncRecord != nil {
-		t.Error("AsyncRecord should not be created due to early termination at boundary")
+	if step.timeout != 10*time.Second {
+		t.Errorf("SetTimeout() timeout = %v, want %v", step.timeout, 10*time.Second)
 	}
-	if actor.asyncCalled {
-		t.Error("AsyncHandler should not be called at termination boundary")
+
+	// Should not allow negative timeout
+	step.SetTimeout(-1 * time.Second)
+	if step.timeout != 10*time.Second {
+		t.Error("SetTimeout() should not allow negative timeout")
 	}
-}
 
-func TestAsyncHandler_Timestamps(t *testing.T) {
-	actor := &MockConfigurableActioner{
-		asyncFunc: func(resp string) error {
-			time.Sleep(10 * time.Millisecond)
-			return nil
-		},
-	}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
-
-	rcder := record.NewRecord("test-0", "", 0)
-	ids := []int{0, 1, 2}
-
-	beforeCall := time.Now().UnixMilli()
-	step.AsyncHandler("response", "test-0-1", ids, 2, rcder)
-	afterCall := time.Now().UnixMilli()
-
-	if rcder.AsyncRecord == nil {
-		t.Fatal("AsyncRecord should be created")
-	}
-	if rcder.AsyncRecord.StartAt < beforeCall {
-		t.Error("AsyncRecord StartAt should be >= time before call")
-	}
-	if rcder.AsyncRecord.EndAt > afterCall {
-		t.Error("AsyncRecord EndAt should be <= time after call")
-	}
-	if rcder.AsyncRecord.EndAt < rcder.AsyncRecord.StartAt {
-		t.Error("AsyncRecord EndAt should be >= StartAt")
-	}
-}
-
-func TestAsyncHandler_ResponsePassed(t *testing.T) {
-	var receivedResp string
-	actor := &MockConfigurableActioner{
-		asyncFunc: func(resp string) error {
-			receivedResp = resp
-			return nil
-		},
-	}
-	step := NewStep("test-step", "Test", actor)
-	step.isAsync = true
-
-	rcder := record.NewRecord("test-0", "", 0)
-	expectedResp := "test-response-data"
-
-	step.AsyncHandler(expectedResp, "test-0-1", []int{0, 1, 2}, 2, rcder)
-
-	if receivedResp != expectedResp {
-		t.Errorf("AsyncHandler received response = %v, want %v", receivedResp, expectedResp)
+	// Should not allow zero timeout
+	step.SetTimeout(0)
+	if step.timeout != 10*time.Second {
+		t.Error("SetTimeout() should not allow zero timeout")
 	}
 }
 
 func TestStepsCount(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "Test", actor)
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
 
 	count := step.StepsCount()
 	if count != 0 {
@@ -423,85 +417,30 @@ func TestStepsCount(t *testing.T) {
 	}
 }
 
-func TestStepFields(t *testing.T) {
+func TestContextPassing(t *testing.T) {
 	actor := &MockSuccessActioner{}
-	name := "test-step"
-	description := "Test Description"
+	step := NewStep("test-step", "Test", 5*time.Second, actor, nil)
 
-	step := NewStep(name, description, actor)
+	rcder := record.NewRecord("test-0", "", 0)
+	testLogger := logger.NewNoOpLogger()
 
-	if step.name != name {
-		t.Errorf("step.name = %v, want %v", step.name, name)
-	}
-	if step.description != description {
-		t.Errorf("step.description = %v, want %v", step.description, description)
-	}
-	if step.execute != actor {
-		t.Error("step.execute should be the provided actor")
-	}
-	// Default isAsync should be false
-	if step.isAsync != false {
-		t.Error("default isAsync should be false")
-	}
-}
-
-func TestStepRun_StatusTransitions(t *testing.T) {
-	tests := []struct {
-		name       string
-		isAsync    bool
-		actorError error
-		wantStatus string
-		wantError  bool
-	}{
-		{
-			name:       "sync success",
-			isAsync:    false,
-			actorError: nil,
-			wantStatus: record.StatusDone,
-			wantError:  false,
-		},
-		{
-			name:       "async success",
-			isAsync:    true,
-			actorError: nil,
-			wantStatus: record.StatusAsyncWaiting,
-			wantError:  false,
-		},
-		{
-			name:       "sync failure",
-			isAsync:    false,
-			actorError: errors.New("sync error"),
-			wantStatus: record.StatusFailed,
-			wantError:  true,
-		},
-		{
-			name:       "async failure",
-			isAsync:    true,
-			actorError: errors.New("async error"),
-			wantStatus: record.StatusFailed,
-			wantError:  true,
-		},
+	testCtx := map[string]interface{}{
+		"userID": "user123",
+		"data":   "test-data",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actor := &MockFailActioner{stepError: tt.actorError}
-			step := NewStep("test", "test", actor)
-			step.isAsync = tt.isAsync
+	err := step.Handle(testCtx, rcder, testLogger)
 
-			rcder := record.NewRecord("test-0", "", 0)
-			err := step.Run("ctx", rcder)
+	if err != nil {
+		t.Errorf("Handle() error = %v, want nil", err)
+	}
 
-			if tt.wantError && err == nil {
-				t.Error("expected error but got nil")
-			}
-			if !tt.wantError && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if rcder.Status != tt.wantStatus {
-				t.Errorf("status = %v, want %v", rcder.Status, tt.wantStatus)
-			}
-		})
+	if ctxMap, ok := actor.lastCtx.(map[string]interface{}); ok {
+		if ctxMap["userID"] != "user123" {
+			t.Error("Context not preserved correctly")
+		}
+	} else {
+		t.Error("Context not passed as expected type")
 	}
 }
 
@@ -510,40 +449,43 @@ func TestStepRun_StatusTransitions(t *testing.T) {
 func BenchmarkNewStep(b *testing.B) {
 	actor := &MockSuccessActioner{}
 	for i := 0; i < b.N; i++ {
-		NewStep("test-step", "description", actor)
+		NewStep("test-step", "description", 5*time.Second, actor, nil)
 	}
 }
 
-func BenchmarkStepRun_Success(b *testing.B) {
+func BenchmarkStepHandle_Success(b *testing.B) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "test", actor)
+	step := NewStep("test-step", "test", 5*time.Second, actor, nil)
+	testLogger := logger.NewNoOpLogger()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rcder := record.NewRecord("test-0", "", 0)
-		step.Run("ctx", rcder)
+		step.Handle("ctx", rcder, testLogger)
 	}
 }
 
-func BenchmarkStepRun_WithError(b *testing.B) {
-	actor := &MockFailActioner{stepError: errors.New("error")}
-	step := NewStep("test-step", "test", actor)
+func BenchmarkStepHandle_WithError(b *testing.B) {
+	actor := &MockFailActioner{handleError: errors.New("error")}
+	step := NewStep("test-step", "test", 5*time.Second, actor, nil)
+	testLogger := logger.NewNoOpLogger()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rcder := record.NewRecord("test-0", "", 0)
-		step.Run("ctx", rcder)
+		step.Handle("ctx", rcder, testLogger)
 	}
 }
 
-func BenchmarkAsyncHandler(b *testing.B) {
+func BenchmarkAsyncHandle(b *testing.B) {
 	actor := &MockSuccessActioner{}
-	step := NewStep("test-step", "test", actor)
-	step.isAsync = true
+	asyncActor := &MockSuccessAsyncActioner{}
+	step := NewStep("test-step", "test", 5*time.Second, actor, asyncActor)
+	testLogger := logger.NewNoOpLogger()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rcder := record.NewRecord("test-0", "", 0)
-		step.AsyncHandler("response", "test-0-1", []int{0, 1, 2}, 2, rcder)
+		step.AsyncHandle("ctx", "response", "test-0-1", []int{0, 1, 2}, 2, rcder, testLogger)
 	}
 }
