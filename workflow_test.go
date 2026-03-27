@@ -75,7 +75,7 @@ func (rt *RealTask) IsAsync() bool {
 
 func (rt *RealTask) Handle(ctx interface{}, rcder *record.Record, logger Logger) error {
 	if len(rt.stages) == 0 {
-		rcder.Status = record.StatusDone
+		rcder.SetStatus(record.StatusDone)
 		return nil
 	}
 
@@ -86,22 +86,22 @@ func (rt *RealTask) Handle(ctx interface{}, rcder *record.Record, logger Logger)
 
 		err := stg.Handle(ctx, nextRecord, logger)
 		if err != nil {
-			rcder.Status = record.StatusFailed
+			rcder.SetStatus(record.StatusFailed)
 			return err
 		}
 
-		if nextRecord.Status == record.StatusFailed {
-			rcder.Status = record.StatusFailed
+		if nextRecord.GetStatus() == record.StatusFailed {
+			rcder.SetStatus(record.StatusFailed)
 			return errors.New("stage failed")
 		}
 
-		if nextRecord.Status == record.StatusAsyncWaiting {
-			rcder.Status = record.StatusAsyncWaiting
+		if nextRecord.GetStatus() == record.StatusAsyncWaiting {
+			rcder.SetStatus(record.StatusAsyncWaiting)
 			return nil
 		}
 	}
 
-	rcder.Status = record.StatusDone
+	rcder.SetStatus(record.StatusDone)
 	return nil
 }
 
@@ -116,8 +116,8 @@ func (rt *RealTask) AsyncHandle(ctx interface{}, resp interface{}, runningID str
 	}
 
 	stg := rt.stages[index]
-	if index < len(rcder.Records) {
-		nextRecord := rcder.Records[index]
+	nextRecord := rcder.GetRecord(index)
+	if nextRecord != nil {
 		stg.AsyncHandle(ctx, resp, runningID, ids, stageIndex+1, nextRecord, logger)
 	}
 }

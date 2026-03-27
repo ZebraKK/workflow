@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"workflow/logger"
+	"workflow/record"
 )
 
 // Use logger.Logger from shared logger package
@@ -37,6 +38,8 @@ type Workflow struct {
 	quitAsyncCh chan struct{}
 	AsyncCh     chan *AsyncJob
 	logger      Logger
+	jobWg       sync.WaitGroup
+	asyncWg     sync.WaitGroup
 }
 
 func NewWorkflow(logger Logger, cfg WorkflowConfig) *Workflow {
@@ -76,11 +79,10 @@ func NewWorkflow(logger Logger, cfg WorkflowConfig) *Workflow {
 }
 
 func (w *Workflow) jobStart() {
-	var wg sync.WaitGroup
 	for i := range w.workerNum {
-		wg.Add(1)
+		w.jobWg.Add(1)
 		go func(workerID int) {
-			defer wg.Done()
+			defer w.jobWg.Done()
 			w.logger.Debug("Job worker started", "workerID", workerID)
 			defer w.logger.Debug("Job worker stopped", "workerID", workerID)
 
@@ -109,9 +111,6 @@ func (w *Workflow) jobStart() {
 			}
 		}(i)
 	}
-
-	wg.Wait()
-	w.logger.Info("All job workers stopped")
 }
 
 func (w *Workflow) runJob(job *Job) {
@@ -130,28 +129,28 @@ func (w *Workflow) runJob(job *Job) {
 	err := job.Pipeline.task.Handle(job.ctx, job.record, jobLogger)
 	if err != nil {
 		jobLogger.Error("Job execution failed", "error", err)
-		job.record.Status = "failed"
+		job.record.SetStatus(record.StatusFailed)
 	}
 	// 中间状态记录？
 	// update job 到db
 
 	// job 后续继续运行处理,如异步等待,失败重试等
-	status := job.record.Status
+	status := job.record.GetStatus()
 	jobLogger.Info("Job completed", "status", status)
 
 	switch status {
-	case "async_waiting":
+	case record.StatusAsyncWaiting:
 		// 加入到异步等待任务记录中去即可。或者db化
 		// 不做任何操作，等待回调处理
 		jobLogger.Debug("Job waiting for async callback")
-	case "completed", "done":
+	case record.StatusDone:
 		// 清理任务
 		// 从任务池中删除
 		w.muJs.Lock()
 		delete(w.jobsStore, job.ID)
 		w.muJs.Unlock()
 		jobLogger.Info("Job completed and removed from store")
-	case "failed":
+	case record.StatusFailed:
 		// 失败处理，告警等
 		jobLogger.Error("Job failed", "recordStatus", status)
 		w.muJs.Lock()
@@ -164,11 +163,10 @@ func (w *Workflow) runJob(job *Job) {
 }
 
 func (w *Workflow) asyncJobStart() {
-	var wg sync.WaitGroup
 	for i := range w.workerNum {
-		wg.Add(1)
+		w.asyncWg.Add(1)
 		go func(workerID int) {
-			defer wg.Done()
+			defer w.asyncWg.Done()
 			w.logger.Debug("Async worker started", "workerID", workerID)
 			defer w.logger.Debug("Async worker stopped", "workerID", workerID)
 
@@ -198,9 +196,6 @@ func (w *Workflow) asyncJobStart() {
 			}
 		}(i)
 	}
-
-	wg.Wait()
-	w.logger.Info("All async workers stopped")
 }
 
 func parseStageByRunningID(runningID string) []int {
@@ -229,15 +224,15 @@ func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 	asyncJob.Job.Pipeline.task.AsyncHandle(asyncJob.Job.ctx, asyncJob.Resp, asyncJob.RunningID, ids, stageIndex, asyncJob.Job.record, asyncLogger)
 
 	// 运行结果决定后续job的处理, 放到retry,done,wait等队列
-	state := asyncJob.Job.record.Status
+	state := asyncJob.Job.record.GetStatus()
 	asyncLogger.Info("Async callback processed", "newStatus", state)
 
 	switch state {
-	case "async_waiting":
+	case record.StatusAsyncWaiting:
 		// 加入到异步等待任务记录中去即可。或者db化
 		// 不做任何操作，等待回调处理
 		asyncLogger.Debug("Job still waiting for async callback")
-	case "completed", "done":
+	case record.StatusDone:
 		if len(ids) < asyncJob.Job.Pipeline.task.StepsCount() {
 			// 还没处理完，继续放回等待
 			select {
@@ -254,7 +249,7 @@ func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 			asyncLogger.Info("Async job completed and removed from store")
 		}
 
-	case "failed":
+	case record.StatusFailed:
 		// 失败处理，告警等
 		asyncLogger.Error("Async job failed")
 		w.muJs.Lock()
@@ -270,20 +265,26 @@ func (w *Workflow) runAsyncJob(asyncJob *AsyncJob) {
 func (w *Workflow) Close() {
 	w.logger.Info("Shutting down workflow")
 
-	// 中断正在运行的任务
-	// Signal all workers to stop
+	// 发送关闭信号到所有worker
 	close(w.quitJobCh)
 	close(w.quitAsyncCh)
 	w.logger.Debug("Quit signal sent to all workers")
 
-	// 释放资源
-	// Close input channels to prevent new jobs
+	// 等待所有job workers完成
+	w.logger.Debug("Waiting for job workers to finish")
+	w.jobWg.Wait()
+	w.logger.Info("All job workers stopped")
+
+	// 等待所有async workers完成
+	w.logger.Debug("Waiting for async workers to finish")
+	w.asyncWg.Wait()
+	w.logger.Info("All async workers stopped")
+
+	// 关闭channels（在所有worker停止后）
 	close(w.JobCh)
 	close(w.AsyncCh)
 	w.logger.Debug("Job and async channels closed")
 
-	// Wait for workers to finish is handled by WaitGroup in jobStart/asyncJobStart
-	// 其他清理等
 	w.logger.Info("Workflow shutdown complete")
 }
 

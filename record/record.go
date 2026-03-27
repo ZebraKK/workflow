@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -15,6 +16,7 @@ const (
 )
 
 type Record struct {
+	mu          sync.RWMutex
 	ID          string
 	StartAt     int64
 	EndAt       int64
@@ -25,7 +27,7 @@ type Record struct {
 
 func NewRecord(prefix, index string, size int) *Record {
 	r := &Record{
-		Status:  "created",
+		Status:  StatusCreated,
 		Records: make([]*Record, size),
 	}
 
@@ -57,12 +59,70 @@ func (r *Record) recordID(prefix, index string) string {
 }
 
 func (r *Record) AddRecord(index int, rcd *Record) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if index < 0 || index >= len(r.Records) {
 		return
 	}
 	r.Records[index] = rcd
 }
 
+func (r *Record) GetRecord(index int) *Record {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.Records == nil || index < 0 || index >= len(r.Records) {
+		return nil
+	}
+	return r.Records[index]
+}
+
+func (r *Record) GetRecordsLen() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.Records == nil {
+		return 0
+	}
+	return len(r.Records)
+}
+
+func (r *Record) SetStatus(status string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Status = status
+}
+
+func (r *Record) GetStatus() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Status
+}
+
 func (r *Record) IsAsyncWaiting() bool {
-	return r.Status == "async_waiting"
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Status == StatusAsyncWaiting
+}
+
+func (r *Record) SetStartAt(t int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.StartAt = t
+}
+
+func (r *Record) SetEndAt(t int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.EndAt = t
+}
+
+func (r *Record) SetAsyncRecord(asyncRecord *Record) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.AsyncRecord = asyncRecord
+}
+
+func (r *Record) GetAsyncRecord() *Record {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.AsyncRecord
 }

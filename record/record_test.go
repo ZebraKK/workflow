@@ -342,14 +342,137 @@ func TestRecordWithAsyncRecord(t *testing.T) {
 	parent := NewRecord("parent-0", "", 1)
 	asyncRec := NewRecord("parent-0", "-async", 0)
 
-	parent.AsyncRecord = asyncRec
+	parent.SetAsyncRecord(asyncRec)
 
-	if parent.AsyncRecord == nil {
+	if parent.GetAsyncRecord() == nil {
 		t.Error("AsyncRecord should not be nil")
 	}
-	if parent.AsyncRecord.ID != "parent-0-async" {
-		t.Errorf("AsyncRecord ID = %s, want parent-0-async", parent.AsyncRecord.ID)
+	if parent.GetAsyncRecord().ID != "parent-0-async" {
+		t.Errorf("AsyncRecord ID = %s, want parent-0-async", parent.GetAsyncRecord().ID)
 	}
+}
+
+func TestGetSetStatus(t *testing.T) {
+	r := NewRecord("test-0", "", 0)
+
+	// Initial status
+	if r.GetStatus() != StatusCreated {
+		t.Errorf("Initial status = %s, want %s", r.GetStatus(), StatusCreated)
+	}
+
+	// Set status
+	r.SetStatus(StatusProcessing)
+	if r.GetStatus() != StatusProcessing {
+		t.Errorf("Status after SetStatus = %s, want %s", r.GetStatus(), StatusProcessing)
+	}
+
+	// Set another status
+	r.SetStatus(StatusDone)
+	if r.GetStatus() != StatusDone {
+		t.Errorf("Status = %s, want %s", r.GetStatus(), StatusDone)
+	}
+}
+
+func TestGetSetStartEndAt(t *testing.T) {
+	r := NewRecord("test-0", "", 0)
+
+	// Set start time
+	startTime := int64(1000)
+	r.SetStartAt(startTime)
+	if r.StartAt != startTime {
+		t.Errorf("StartAt = %d, want %d", r.StartAt, startTime)
+	}
+
+	// Set end time
+	endTime := int64(2000)
+	r.SetEndAt(endTime)
+	if r.EndAt != endTime {
+		t.Errorf("EndAt = %d, want %d", r.EndAt, endTime)
+	}
+}
+
+func TestGetRecord(t *testing.T) {
+	parent := NewRecord("parent-0", "", 3)
+
+	// Add records
+	child1 := NewRecord("child-1", "", 0)
+	child2 := NewRecord("child-2", "", 0)
+
+	parent.AddRecord(0, child1)
+	parent.AddRecord(1, child2)
+
+	// Get records
+	got1 := parent.GetRecord(0)
+	if got1 == nil {
+		t.Fatal("GetRecord(0) returned nil")
+	}
+	if got1.ID != "child-1-2" {
+		t.Errorf("GetRecord(0) ID = %s, want child-1-2", got1.ID)
+	}
+
+	got2 := parent.GetRecord(1)
+	if got2 == nil {
+		t.Fatal("GetRecord(1) returned nil")
+	}
+	if got2.ID != "child-2-3" {
+		t.Errorf("GetRecord(1) ID = %s, want child-2-3", got2.ID)
+	}
+
+	// Get unset record
+	got3 := parent.GetRecord(2)
+	if got3 != nil {
+		t.Errorf("GetRecord(2) = %v, want nil", got3)
+	}
+
+	// Get out of bounds
+	gotOutOfBounds := parent.GetRecord(10)
+	if gotOutOfBounds != nil {
+		t.Errorf("GetRecord(10) = %v, want nil", gotOutOfBounds)
+	}
+}
+
+func TestGetRecordsLen(t *testing.T) {
+	tests := []struct {
+		name string
+		size int
+	}{
+		{"zero size", 0},
+		{"one size", 1},
+		{"multiple size", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRecord("test-0", "", tt.size)
+			if got := r.GetRecordsLen(); got != tt.size {
+				t.Errorf("GetRecordsLen() = %d, want %d", got, tt.size)
+			}
+		})
+	}
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	r := NewRecord("test-0", "", 10)
+
+	// Concurrent status updates
+	done := make(chan bool)
+	for i := 0; i < 10; i++ {
+		go func(n int) {
+			r.SetStatus(StatusProcessing)
+			_ = r.GetStatus()
+			r.SetStartAt(int64(n))
+			r.SetEndAt(int64(n + 1000))
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// Should not panic
+	_ = r.GetStatus()
 }
 
 // Benchmark tests

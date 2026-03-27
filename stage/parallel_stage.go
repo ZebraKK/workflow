@@ -23,11 +23,11 @@ func (s *Stage) parallelHandle(input interface{}, rcder *record.Record, logger L
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rcder.Status = "processing"
-	rcder.StartAt = time.Now().UnixMilli()
+	rcder.SetStatus(record.StatusProcessing)
+	rcder.SetStartAt(time.Now().UnixMilli())
 	defer func() {
-		rcder.EndAt = time.Now().UnixMilli()
-		stageLogger.Info("Parallel stage completed", "status", rcder.Status)
+		rcder.SetEndAt(time.Now().UnixMilli())
+		stageLogger.Info("Parallel stage completed", "status", rcder.GetStatus())
 	}()
 
 	var wg sync.WaitGroup
@@ -45,7 +45,7 @@ func (s *Stage) parallelHandle(input interface{}, rcder *record.Record, logger L
 			var tErr error
 			stepLogger := stageLogger.With("stepIndex", idx, "stepCount", stp.StepsCount())
 			nextRecord := record.NewRecord(rcder.ID, strconv.Itoa(idx), stp.StepsCount())
-			nextRecord.Status = "processing"
+			nextRecord.SetStatus(record.StatusProcessing)
 			rcder.AddRecord(idx, nextRecord)
 
 			defer func() {
@@ -89,12 +89,12 @@ func (s *Stage) parallelHandle(input interface{}, rcder *record.Record, logger L
 	// t.updateTaskStatus()
 
 	if s.IsAsync() && err == nil {
-		rcder.Status = "async_waiting"
+		rcder.SetStatus(record.StatusAsyncWaiting)
 		stageLogger.Info("Stage waiting for async callbacks")
 	} else if err == nil {
-		rcder.Status = "done"
+		rcder.SetStatus(record.StatusDone)
 	} else {
-		rcder.Status = "failed"
+		rcder.SetStatus(record.StatusFailed)
 	}
 
 	return err
@@ -123,23 +123,28 @@ func (s *Stage) parallelAsyncHandle(ctx interface{}, resp interface{}, runningID
 	}
 
 	index := ids[stageIndex]
-	if index < 0 || index >= len(s.Steps) || index >= len(rcder.Records) {
-		stageLogger.Warn("Invalid index in async handler", "index", index, "stepsLen", len(s.Steps), "recordsLen", len(rcder.Records))
+	if index < 0 || index >= len(s.Steps) {
+		stageLogger.Warn("Invalid index in async handler", "index", index, "stepsLen", len(s.Steps))
 		return
 	}
 	stp := s.Steps[index]
 	stepLogger := stageLogger.With("stepIndex", index)
 
-	nextRcrd := rcder.Records[index]
+	nextRcrd := rcder.GetRecord(index)
+	if nextRcrd == nil {
+		stageLogger.Warn("Record not found at index", "index", index)
+		return
+	}
 	stepLogger.Debug("Calling step async handler")
 	stp.AsyncHandle(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
 
 	// 并发的情况: 某一个任务的异步响应来了，之前的任务还没完成。还在running状态 to-defenses
 	// update current-level status
-	for _, r := range rcder.Records {
-		if r.Status != "done" { // todo: 可能还有其他状态
-			rcder.Status = r.Status
-			stageLogger.Debug("Stage status updated from record", "status", r.Status)
+	for i := 0; i < len(s.Steps); i++ {
+		r := rcder.GetRecord(i)
+		if r != nil && r.GetStatus() != record.StatusDone {
+			rcder.SetStatus(r.GetStatus())
+			stageLogger.Debug("Stage status updated from record", "status", r.GetStatus())
 			return
 		}
 	}
