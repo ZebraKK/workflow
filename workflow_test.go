@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -128,7 +129,7 @@ func (rt *RealTask) StepsCount() int {
 
 // Test NewWorkflow
 func TestNewWorkflow(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 
 	if wf == nil {
 		t.Fatal("NewWorkflow() returned nil")
@@ -154,17 +155,13 @@ func TestNewWorkflow(t *testing.T) {
 		t.Error("AsyncCh not initialized")
 	}
 
-	if wf.quitJobCh == nil {
-		t.Error("quitJobCh not initialized")
-	}
-
 	// Give goroutines time to start
 	time.Sleep(10 * time.Millisecond)
 }
 
 // Test CreatePipeline
 func TestCreatePipeline(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond) // cleanup
 
 	task := NewRealTask()
@@ -189,19 +186,19 @@ func TestCreatePipeline(t *testing.T) {
 }
 
 func TestCreatePipeline_NilTask(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
-	defer time.Sleep(10 * time.Millisecond)
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	defer wf.Close()
 
-	// This should work but pipeline will have nil task
+	// nil task 应被拒绝，否则 LaunchPipeline 调用 task.StepsCount() 时会 panic。
 	err := wf.CreatePipeline("test-pipeline", nil)
-	if err != nil {
-		t.Errorf("CreatePipeline() with nil task error = %v, want nil", err)
+	if err == nil {
+		t.Error("CreatePipeline() with nil task should return error, got nil")
 	}
 }
 
 // Test GetPipeline
 func TestGetPipeline(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	task := NewRealTask()
@@ -236,7 +233,7 @@ func TestGetPipeline(t *testing.T) {
 }
 
 func TestGetPipeline_NotFound(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	pl, ok := wf.GetPipeline("non-existent-id")
@@ -250,7 +247,7 @@ func TestGetPipeline_NotFound(t *testing.T) {
 
 // Test DeletePipeline
 func TestDeletePipeline(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	task := NewRealTask()
@@ -283,7 +280,7 @@ func TestDeletePipeline(t *testing.T) {
 }
 
 func TestDeletePipeline_NotFound(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	err := wf.DeletePipeline("non-existent-id")
@@ -297,7 +294,7 @@ func TestDeletePipeline_NotFound(t *testing.T) {
 
 // Test UpdatePipeline
 func TestUpdatePipeline(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	task1 := NewRealTask()
@@ -337,7 +334,7 @@ func TestUpdatePipeline(t *testing.T) {
 }
 
 func TestUpdatePipeline_NotFound(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	task := NewRealTask()
@@ -349,7 +346,7 @@ func TestUpdatePipeline_NotFound(t *testing.T) {
 
 // Test ListPipelines
 func TestListPipelines(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	task := NewRealTask()
@@ -370,7 +367,7 @@ func TestListPipelines(t *testing.T) {
 }
 
 func TestListPipelines_Empty(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	pipelines := wf.ListPipelines()
@@ -380,9 +377,145 @@ func TestListPipelines_Empty(t *testing.T) {
 	}
 }
 
+// Test DeletePipelineByName
+func TestDeletePipelineByName(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	defer wf.Close()
+
+	task := NewRealTask()
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stg := stage.NewStage("stage1", "stage-1", "serial", stp)
+	task.AddStage(stg)
+
+	wf.CreatePipeline("test-pipeline", task)
+
+	err := wf.DeletePipelineByName("test-pipeline")
+	if err != nil {
+		t.Errorf("DeletePipelineByName() error = %v, want nil", err)
+	}
+
+	_, ok := wf.GetPipelineByName("test-pipeline")
+	if ok {
+		t.Error("Pipeline should be deleted")
+	}
+}
+
+func TestDeletePipelineByName_NotFound(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	defer wf.Close()
+
+	err := wf.DeletePipelineByName("non-existent")
+	if err == nil {
+		t.Error("DeletePipelineByName() should return error for non-existent pipeline")
+	}
+	if err.Error() != "pipeline not found" {
+		t.Errorf("DeletePipelineByName() error = %v, want 'pipeline not found'", err)
+	}
+}
+
+// Test UpdatePipelineByName
+func TestUpdatePipelineByName(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	defer wf.Close()
+
+	task1 := NewRealTask()
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stg := stage.NewStage("stage1", "stage-1", "serial", stp)
+	task1.AddStage(stg)
+
+	task2 := NewRealTask()
+	task2.AddStage(stg)
+	task2.AddStage(stg) // two stages
+
+	wf.CreatePipeline("test-pipeline", task1)
+
+	err := wf.UpdatePipelineByName("test-pipeline", task2)
+	if err != nil {
+		t.Errorf("UpdatePipelineByName() error = %v, want nil", err)
+	}
+
+	pl, ok := wf.GetPipelineByName("test-pipeline")
+	if !ok {
+		t.Fatal("Pipeline not found after update")
+	}
+	if pl.task.StepsCount() != 2 {
+		t.Errorf("Updated task stepsCount = %d, want 2", pl.task.StepsCount())
+	}
+}
+
+func TestUpdatePipelineByName_NotFound(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	defer wf.Close()
+
+	task := NewRealTask()
+	err := wf.UpdatePipelineByName("non-existent", task)
+	if err == nil {
+		t.Error("UpdatePipelineByName() should return error for non-existent pipeline")
+	}
+	if err.Error() != "pipeline not found" {
+		t.Errorf("UpdatePipelineByName() error = %v, want 'pipeline not found'", err)
+	}
+}
+
+// Test Close
+func TestClose_DrainsPendingJobs(t *testing.T) {
+	processed := make(chan struct{}, 5)
+	actor := &MockActioner{
+		handleFunc: func(ctx interface{}) error {
+			processed <- struct{}{}
+			return nil
+		},
+	}
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{WorkerNum: 1, JobChSize: 5}, nil)
+
+	task := NewRealTask()
+	stp := step.NewStep("step1", "Step 1", time.Second, actor, nil)
+	stg := stage.NewStage("stage1", "stage-1", "serial", stp)
+	task.AddStage(stg)
+	wf.CreatePipeline("test-pipeline", task)
+
+	pl, _ := wf.GetPipelineByName("test-pipeline")
+	// 连续投入 3 个 job，然后立即 Close()
+	for i := 0; i < 3; i++ {
+		wf.LaunchPipeline(pl.ID, nil)
+	}
+	wf.Close() // 应等到所有已入队 job 执行完毕
+
+	if len(processed) != 3 {
+		t.Errorf("Close() should drain all pending jobs, got %d processed, want 3", len(processed))
+	}
+}
+
+func TestClose_RejectsNewJobs(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	task := NewRealTask()
+	actor := &MockActioner{}
+	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
+	stg := stage.NewStage("stage1", "stage-1", "serial", stp)
+	task.AddStage(stg)
+	wf.CreatePipeline("test-pipeline", task)
+	pl, _ := wf.GetPipelineByName("test-pipeline")
+
+	wf.Close()
+
+	_, err := wf.LaunchPipeline(pl.ID, nil)
+	if err == nil {
+		t.Error("LaunchPipeline() after Close() should return error")
+	}
+}
+
+func TestClose_Idempotent(t *testing.T) {
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
+	// 多次调用 Close() 不应 panic
+	wf.Close()
+	wf.Close()
+}
+
 // Test LaunchPipeline
 func TestLaunchPipeline(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(50 * time.Millisecond) // Allow time for job processing
 
 	task := NewRealTask()
@@ -402,7 +535,7 @@ func TestLaunchPipeline(t *testing.T) {
 	}
 	wf.muPl.RUnlock()
 
-	err := wf.LaunchPipeline(pipelineID, "test-context")
+	_, err := wf.LaunchPipeline(pipelineID, json.RawMessage(`"test-context"`))
 	if err != nil {
 		t.Errorf("LaunchPipeline() error = %v, want nil", err)
 	}
@@ -412,10 +545,10 @@ func TestLaunchPipeline(t *testing.T) {
 }
 
 func TestLaunchPipeline_NotFound(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
-	err := wf.LaunchPipeline("non-existent-id", "context")
+	_, err := wf.LaunchPipeline("non-existent-id", json.RawMessage(`"context"`))
 	if err == nil {
 		t.Error("LaunchPipeline() should return error for non-existent pipeline")
 	}
@@ -426,7 +559,7 @@ func TestLaunchPipeline_ChannelFull(t *testing.T) {
 		WorkerNum:   1,
 		JobChSize:   2,
 		AsyncChSize: 2,
-	})
+	}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	// Create a slow task that blocks the workers
@@ -457,11 +590,11 @@ func TestLaunchPipeline_ChannelFull(t *testing.T) {
 
 	// Fill up the job channel and workers
 	for i := 0; i < 5; i++ {
-		wf.LaunchPipeline(pipelineID, "context")
+		wf.LaunchPipeline(pipelineID, json.RawMessage(`"context"`))
 	}
 
 	// This should fail because channel is full
-	err := wf.LaunchPipeline(pipelineID, "context")
+	_, err := wf.LaunchPipeline(pipelineID, json.RawMessage(`"context"`))
 
 	if err == nil {
 		t.Error("LaunchPipeline() should return error when channel is full")
@@ -520,7 +653,7 @@ func TestParseStageByRunningID(t *testing.T) {
 
 // Test CallbackHandler
 func TestCallbackHandler(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(50 * time.Millisecond)
 
 	asyncActor := &MockAsyncActioner{}
@@ -540,7 +673,7 @@ func TestCallbackHandler(t *testing.T) {
 	wf.muPl.RUnlock()
 
 	// Launch pipeline to create a job
-	wf.LaunchPipeline(pipelineID, "context")
+	wf.LaunchPipeline(pipelineID, json.RawMessage(`"context"`))
 	time.Sleep(20 * time.Millisecond)
 
 	// Get job ID
@@ -567,7 +700,7 @@ func TestCallbackHandler(t *testing.T) {
 }
 
 func TestCallbackHandler_EmptyID(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	err := wf.CallbackHandler("", "response")
@@ -580,7 +713,7 @@ func TestCallbackHandler_EmptyID(t *testing.T) {
 }
 
 func TestCallbackHandler_JobNotFound(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(10 * time.Millisecond)
 
 	err := wf.CallbackHandler("non-existent-job-1", "response")
@@ -605,7 +738,7 @@ func TestGenerateID(t *testing.T) {
 
 // Test concurrent access
 func TestConcurrentPipelineOperations(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(100 * time.Millisecond)
 
 	var wg sync.WaitGroup
@@ -634,7 +767,7 @@ func TestConcurrentPipelineOperations(t *testing.T) {
 }
 
 func TestConcurrentJobLaunches(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(100 * time.Millisecond)
 
 	task := NewRealTask()
@@ -660,7 +793,7 @@ func TestConcurrentJobLaunches(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			wf.LaunchPipeline(pipelineID, "context")
+			wf.LaunchPipeline(pipelineID, json.RawMessage(`"context"`))
 		}()
 	}
 
@@ -670,7 +803,7 @@ func TestConcurrentJobLaunches(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkCreatePipeline(b *testing.B) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	task := NewRealTask()
 	actor := &MockActioner{}
 	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
@@ -684,7 +817,7 @@ func BenchmarkCreatePipeline(b *testing.B) {
 }
 
 func BenchmarkLaunchPipeline(b *testing.B) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	task := NewRealTask()
 	actor := &MockActioner{}
 	stp := step.NewStep("step1", "Step 1", 5*time.Second, actor, nil)
@@ -703,7 +836,7 @@ func BenchmarkLaunchPipeline(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		wf.LaunchPipeline(pipelineID, "context")
+		wf.LaunchPipeline(pipelineID, json.RawMessage(`"context"`))
 	}
 }
 
@@ -717,7 +850,7 @@ func BenchmarkGenerateID(b *testing.B) {
 
 // Test with real stage and step - Serial execution
 func TestIntegration_RealStageStep_Serial(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(50 * time.Millisecond)
 
 	// Create real steps with actors
@@ -749,7 +882,7 @@ func TestIntegration_RealStageStep_Serial(t *testing.T) {
 	}
 	wf.muPl.RUnlock()
 
-	err = wf.LaunchPipeline(pipelineID, "test-context")
+	_, err = wf.LaunchPipeline(pipelineID, json.RawMessage(`"test-context"`))
 	if err != nil {
 		t.Fatalf("LaunchPipeline() failed: %v", err)
 	}
@@ -759,7 +892,7 @@ func TestIntegration_RealStageStep_Serial(t *testing.T) {
 
 // Test with real stage and step - Parallel execution
 func TestIntegration_RealStageStep_Parallel(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(50 * time.Millisecond)
 
 	// Create real steps with actors
@@ -794,7 +927,7 @@ func TestIntegration_RealStageStep_Parallel(t *testing.T) {
 	}
 	wf.muPl.RUnlock()
 
-	err = wf.LaunchPipeline(pipelineID, "test-context")
+	_, err = wf.LaunchPipeline(pipelineID, json.RawMessage(`"test-context"`))
 	if err != nil {
 		t.Fatalf("LaunchPipeline() failed: %v", err)
 	}
@@ -804,7 +937,7 @@ func TestIntegration_RealStageStep_Parallel(t *testing.T) {
 
 // Test with real stage and step - Error handling
 func TestIntegration_RealStageStep_Error(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(50 * time.Millisecond)
 
 	// Create real step that fails
@@ -832,7 +965,7 @@ func TestIntegration_RealStageStep_Error(t *testing.T) {
 	}
 	wf.muPl.RUnlock()
 
-	err = wf.LaunchPipeline(pipelineID, "test-context")
+	_, err = wf.LaunchPipeline(pipelineID, json.RawMessage(`"test-context"`))
 	if err != nil {
 		t.Fatalf("LaunchPipeline() failed: %v", err)
 	}
@@ -842,7 +975,7 @@ func TestIntegration_RealStageStep_Error(t *testing.T) {
 
 // Test with real stage and step - Multiple stages
 func TestIntegration_RealStageStep_MultipleStages(t *testing.T) {
-	wf := NewWorkflow(noOpLogger, WorkflowConfig{})
+	wf := NewWorkflow(noOpLogger, WorkflowConfig{}, nil)
 	defer time.Sleep(100 * time.Millisecond)
 
 	// Create real steps with actors
@@ -882,7 +1015,7 @@ func TestIntegration_RealStageStep_MultipleStages(t *testing.T) {
 	}
 	wf.muPl.RUnlock()
 
-	err = wf.LaunchPipeline(pipelineID, "test-context")
+	_, err = wf.LaunchPipeline(pipelineID, json.RawMessage(`"test-context"`))
 	if err != nil {
 		t.Fatalf("LaunchPipeline() failed: %v", err)
 	}

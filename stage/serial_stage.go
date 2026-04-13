@@ -108,7 +108,10 @@ func (t *Stage) serialAsyncHandle(ctx interface{}, resp interface{}, runningID s
 	}
 
 	if index < len(t.Steps)-1 { //serial
-		// 继续执行后续步骤
+		// 继续执行后续步骤。
+		// TODO(C5): 此处在 async worker goroutine 上内联执行同步阶段，会占用 async pool。
+		// 根本修复需要将续接逻辑通过 JobCh 回流到 job worker pool，
+		// 要求变更 AsyncHandle 接口签名或引入续接回调，待后续 Phase 重构。
 		stageLogger.Info("Continuing with next steps", "nextIndex", index+1)
 		t.serialHandle(ctx, index+1, rcder, logger)
 	}

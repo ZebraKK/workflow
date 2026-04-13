@@ -10,7 +10,7 @@ import (
 func main() {
 	// Create a text logger for more readable output
 	logger := logger.NewTextLogger(slog.LevelInfo)
-	wf := workflow.NewWorkflow(logger, workflow.WorkflowConfig{})
+	wf := workflow.NewWorkflow(logger, workflow.WorkflowConfig{}, nil)
 
 	mytask := NewMyTask()
 	wf.CreatePipeline("mytask", mytask)

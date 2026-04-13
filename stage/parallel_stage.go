@@ -102,9 +102,9 @@ func (s *Stage) parallelHandle(input interface{}, rcder *record.Record, logger L
 
 func (s *Stage) worker(stp steper, input interface{}, rcder *record.Record, logger Logger) <-chan error {
 	done := make(chan error, 1)
-	// task 时长 TODO
-	done <- stp.Handle(input, rcder, logger)
-
+	go func() {
+		done <- stp.Handle(input, rcder, logger)
+	}()
 	return done
 }
 
@@ -149,7 +149,10 @@ func (s *Stage) parallelAsyncHandle(ctx interface{}, resp interface{}, runningID
 		}
 	}
 
-	stageLogger.Info("All parallel steps completed")
 	// continue to next steps if all done
 	// 并发的情况下，不继续执行后续步骤，由外层控制
+	// to 验证
+	// 所有并行步骤均已完成，显式标记为 Done，外层串行阶段感知此状态后负责续接后续阶段。
+	stageLogger.Info("All parallel steps completed, marking stage as done")
+	rcder.SetStatus(record.StatusDone)
 }
