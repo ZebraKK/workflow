@@ -18,12 +18,18 @@ func (t *Stage) serialHandle(ctx interface{}, index int, rcder *record.Record, l
 	stageLogger := logger.With("stage", t.Name, "stageID", t.ID, "mode", "serial")
 	stageLogger.Info("Starting serial stage execution")
 
-	rcder.Status = "processing"
-	rcder.StartAt = time.Now().UnixMilli()
+	rcder.SetStatus(record.StatusProcessing)
+	rcder.SetStartAt(time.Now().UnixMilli())
 	var err error
 	defer func() {
-		rcder.EndAt = time.Now().UnixMilli()
-		stageLogger.Info("Serial stage completed", "status", rcder.Status)
+		rcder.SetEndAt(time.Now().UnixMilli())
+		stageLogger.Info("Serial stage completed", "status", rcder.GetStatus())
+	}()
+	defer func() {
+		if err != nil {
+			rcder.SetStatus(record.StatusFailed)
+			stageLogger.Error("Serial stage execution failed", "error", err)
+		}
 	}()
 
 	for i := index; i < len(t.Steps); i++ {
@@ -35,24 +41,25 @@ func (t *Stage) serialHandle(ctx interface{}, index int, rcder *record.Record, l
 
 		stepLogger.Debug("Executing step")
 		err_ := stp.Handle(ctx, nextRecord, stepLogger)
-		rcder.Status = nextRecord.Status
+		rcder.SetStatus(nextRecord.GetStatus())
 		if err_ != nil {
 			err = err_
 			stepLogger.Error("Step execution failed", "error", err_)
 			break
 		}
 
-		switch nextRecord.Status {
-		case "failed", "async_waiting":
-			stepLogger.Info("Step ended with special status", "status", nextRecord.Status)
+		nextStatus := nextRecord.GetStatus()
+		switch nextStatus {
+		case record.StatusFailed, record.StatusAsyncWaiting:
+			stepLogger.Info("Step ended with special status", "status", nextStatus)
 			return err
-		case "done":
+		case record.StatusDone:
 			stepLogger.Debug("Step completed successfully")
 			// continue
 		default:
-			rcder.Status = "failed"
-			err = errors.New("unknown step status: " + nextRecord.Status)
-			stepLogger.Error("Unknown step status", "status", nextRecord.Status)
+			rcder.SetStatus(record.StatusFailed)
+			err = errors.New("unknown step status: " + nextStatus)
+			stepLogger.Error("Unknown step status", "status", nextStatus)
 			return err
 		}
 	}
@@ -75,28 +82,36 @@ func (t *Stage) serialAsyncHandle(ctx interface{}, resp interface{}, runningID s
 	}
 
 	index := ids[stageIndex]
-	if index < 0 || index >= len(t.Steps) || index >= len(rcder.Records) {
-		stageLogger.Warn("Invalid index in async handler", "index", index, "stepsLen", len(t.Steps), "recordsLen", len(rcder.Records))
+	if index < 0 || index >= len(t.Steps) {
+		stageLogger.Warn("Invalid index in async handler", "index", index, "stepsLen", len(t.Steps))
 		return
 	}
 	stp := t.Steps[index]
 	stepLogger := stageLogger.With("stepIndex", index)
 
-	nextRcrd := rcder.Records[index]
+	nextRcrd := rcder.GetRecord(index)
+	if nextRcrd == nil {
+		stageLogger.Warn("Record not found at index", "index", index)
+		return
+	}
 	stepLogger.Debug("Calling step async handler")
 	stp.AsyncHandle(ctx, resp, runningID, ids, stageIndex+1, nextRcrd, stepLogger)
 
 	// update current-level status
-	for _, r := range rcder.Records {
-		if r.Status != "done" { // todo: 可能还有其他状态
-			rcder.Status = r.Status
-			stageLogger.Debug("Stage status updated from record", "status", r.Status)
+	for i := 0; i < len(t.Steps); i++ {
+		r := rcder.GetRecord(i)
+		if r != nil && r.GetStatus() != record.StatusDone {
+			rcder.SetStatus(r.GetStatus())
+			stageLogger.Debug("Stage status updated from record", "status", r.GetStatus())
 			return
 		}
 	}
 
 	if index < len(t.Steps)-1 { //serial
-		// 继续执行后续步骤
+		// 继续执行后续步骤。
+		// TODO(C5): 此处在 async worker goroutine 上内联执行同步阶段，会占用 async pool。
+		// 根本修复需要将续接逻辑通过 JobCh 回流到 job worker pool，
+		// 要求变更 AsyncHandle 接口签名或引入续接回调，待后续 Phase 重构。
 		stageLogger.Info("Continuing with next steps", "nextIndex", index+1)
 		t.serialHandle(ctx, index+1, rcder, logger)
 	}

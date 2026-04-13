@@ -131,7 +131,7 @@ func TestNewStep(t *testing.T) {
 			wantNil:     true,
 		},
 		{
-			name:        "zero timeout gets default",
+			name:        "zero timeout means no timeout",
 			stepName:    "test-step",
 			description: "Test",
 			timeout:     0,
@@ -143,12 +143,16 @@ func TestNewStep(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			step := NewStep(tt.stepName, tt.description, tt.timeout, tt.actor, tt.asyncActor)
 			if tt.wantNil {
-				if step != nil {
-					t.Errorf("NewStep() should return nil for nil actor, got %v", step)
-				}
+				// Test that nil actor causes panic
+				defer func() {
+					if r := recover(); r == nil {
+						t.Errorf("NewStep() should panic for nil actor")
+					}
+				}()
+				NewStep(tt.stepName, tt.description, tt.timeout, tt.actor, tt.asyncActor)
 			} else {
+				step := NewStep(tt.stepName, tt.description, tt.timeout, tt.actor, tt.asyncActor)
 				if step == nil {
 					t.Fatal("NewStep() returned nil unexpectedly")
 				}

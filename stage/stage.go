@@ -18,7 +18,6 @@ type steper interface {
 type Stage struct {
 	Name    string
 	ID      string
-	Ctx     string   // TODO:
 	Mode    string   // serial / parallel
 	Steps   []steper // 数据结构TODO：优化
 	isAsync bool

@@ -31,12 +31,9 @@ type Step struct {
 
 func NewStep(name, description string, timeout time.Duration, actor Actioner, asyncActor AsyncActioner) *Step {
 	if actor == nil {
-		fmt.Println("Error: Actioner cannot be nil")
-		return nil
+		panic("actor cannot be nil")
 	}
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
+	// timeout can be 0, which means no timeout
 	return &Step{
 		name:         name,
 		description:  description,
@@ -65,27 +62,32 @@ func (s *Step) Handle(ctx interface{}, rcder *record.Record, logger Logger) erro
 	stepLogger.Info("Starting step execution")
 
 	var err error
-	rcder.StartAt = time.Now().UnixMilli()
-	rcder.Status = "processing"
+	rcder.SetStartAt(time.Now().UnixMilli())
+	rcder.SetStatus(record.StatusProcessing)
 	defer func() {
-		rcder.EndAt = time.Now().UnixMilli()
+		rcder.SetEndAt(time.Now().UnixMilli())
 
 		if err != nil {
-			rcder.Status = "failed"
+			rcder.SetStatus(record.StatusFailed)
 			stepLogger.Error("Step execution failed", "error", err)
 		} else {
 			if s.IsAsync() {
-				rcder.Status = "async_waiting"
+				rcder.SetStatus(record.StatusAsyncWaiting)
 				stepLogger.Info("Step completed - waiting for async callback")
 			} else {
-				rcder.Status = "done"
+				rcder.SetStatus(record.StatusDone)
 				stepLogger.Info("Step completed successfully")
 			}
 		}
 	}()
 
-	stepLogger.Debug("Executing step actor with timeout", "timeout", s.timeout)
-	err = s.executeWithTimeout(ctx, stepLogger)
+	if s.timeout > 0 {
+		stepLogger.Debug("Executing step actor with timeout", "timeout", s.timeout)
+		err = s.executeWithTimeout(ctx, stepLogger)
+	} else {
+		stepLogger.Debug("Executing step actor without timeout")
+		err = s.execute.Handle(ctx)
+	}
 
 	return err
 }
@@ -107,29 +109,35 @@ func (s *Step) AsyncHandle(ctx interface{}, resp interface{}, runningID string, 
 		return
 	}
 
-	if rcder.AsyncRecord == nil {
-		rcder.AsyncRecord = record.NewRecord(rcder.ID, "-async", 0)
+	if rcder.GetAsyncRecord() == nil {
+		rcder.SetAsyncRecord(record.NewRecord(rcder.ID, "-async", 0))
 		stepLogger.Debug("Created async record")
 	}
-	rcder.AsyncRecord.StartAt = time.Now().UnixMilli()
+	asyncRec := rcder.GetAsyncRecord()
+	asyncRec.SetStartAt(time.Now().UnixMilli())
 	defer func() {
-		rcder.AsyncRecord.EndAt = time.Now().UnixMilli()
+		asyncRec.SetEndAt(time.Now().UnixMilli())
 	}()
 
 	var err error
 	defer func() {
 		// update record status
 		if err != nil {
-			rcder.AsyncRecord.Status = "failed"
+			asyncRec.SetStatus(record.StatusFailed)
 			stepLogger.Error("Async handler failed", "error", err)
 		} else {
-			rcder.AsyncRecord.Status = "done"
+			asyncRec.SetStatus(record.StatusDone)
 			stepLogger.Info("Async handler completed successfully")
 		}
 	}()
 
-	stepLogger.Debug("Executing async handler with timeout", "timeout", s.timeout)
-	err = s.executeAsyncWithTimeout(ctx, resp, stepLogger)
+	if s.timeout > 0 {
+		stepLogger.Debug("Executing async handler with timeout", "timeout", s.timeout)
+		err = s.executeAsyncWithTimeout(ctx, resp, stepLogger)
+	} else {
+		stepLogger.Debug("Executing async handler without timeout")
+		err = s.asyncExecute.AsyncHandle(ctx, resp)
+	}
 
 }
 

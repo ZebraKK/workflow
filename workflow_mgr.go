@@ -3,6 +3,7 @@ package workflow
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math/rand"
 	"strconv"
@@ -24,19 +25,16 @@ type Tasker interface {
 }
 
 type Pipeline struct {
-	Name        string
-	ID          string
-	task        Tasker
-	defaultCtx  string
-	runningMode string // serial / parallel or queue // lasted or every
+	Name string
+	ID   string
+	task Tasker
 }
 
 type Job struct {
-	ID          string
-	Pipeline    Pipeline
-	description string
-	ctx         interface{}
-	record      *record.Record
+	ID       string
+	Pipeline Pipeline
+	ctx      json.RawMessage // 调用方序列化的请求参数，可直接持久化
+	record   *record.Record
 }
 
 type AsyncJob struct {
@@ -61,24 +59,23 @@ func (w *Workflow) CreatePipeline(name string, t Tasker) error {
 		w.logger.Error("CreatePipeline failed: empty pipeline name")
 		return errors.New("pipeline name cannot be empty")
 	}
-
-	w.muPl.RLock()
-	_, exists := w.pipelineMapWithName[name]
-	w.muPl.RUnlock()
-	if exists {
-		w.logger.Warn("CreatePipeline failed: duplicate pipeline name", "name", name)
-		return errors.New("duplicate pipeline")
+	if t == nil {
+		w.logger.Error("CreatePipeline failed: nil task", "name", name)
+		return errors.New("task cannot be nil")
 	}
 
 	pl := &Pipeline{
-		Name:        name,
-		ID:          generateID(name),
-		task:        t,
-		defaultCtx:  "",
-		runningMode: "serial",
+		Name: name,
+		ID:   generateID(name),
+		task: t,
 	}
+
 	w.muPl.Lock()
 	defer w.muPl.Unlock()
+	if _, exists := w.pipelineMapWithName[name]; exists {
+		w.logger.Warn("CreatePipeline failed: duplicate pipeline name", "name", name)
+		return errors.New("duplicate pipeline")
+	}
 	w.pipelineMap[pl.ID] = pl
 	w.pipelineMapWithName[pl.Name] = pl.ID
 
@@ -108,16 +105,13 @@ func (w *Workflow) GetPipelineByName(name string) (*Pipeline, bool) {
 }
 
 func (w *Workflow) DeletePipeline(id string) error {
-	w.muPl.RLock()
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
 	pl, exists := w.pipelineMap[id]
-	w.muPl.RUnlock()
 	if !exists {
 		w.logger.Warn("DeletePipeline failed: pipeline not found", "id", id)
 		return errors.New("pipeline not found")
 	}
-
-	w.muPl.Lock()
-	defer w.muPl.Unlock()
 	delete(w.pipelineMap, id)
 	delete(w.pipelineMapWithName, pl.Name)
 
@@ -125,16 +119,13 @@ func (w *Workflow) DeletePipeline(id string) error {
 	return nil
 }
 func (w *Workflow) DeletePipelineByName(name string) error {
-	w.muPl.RLock()
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
 	id, exists := w.pipelineMapWithName[name]
-	w.muPl.RUnlock()
 	if !exists {
 		w.logger.Warn("DeletePipelineByName failed: pipeline not found", "name", name)
 		return errors.New("pipeline not found")
 	}
-
-	w.muPl.Lock()
-	defer w.muPl.Unlock()
 	delete(w.pipelineMap, id)
 	delete(w.pipelineMapWithName, name)
 
@@ -143,32 +134,26 @@ func (w *Workflow) DeletePipelineByName(name string) error {
 }
 
 func (w *Workflow) UpdatePipeline(id string, t Tasker) error {
-	w.muPl.RLock()
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
 	pl, exists := w.pipelineMap[id]
-	w.muPl.RUnlock()
 	if !exists {
 		w.logger.Warn("UpdatePipeline failed: pipeline not found", "id", id)
 		return errors.New("pipeline not found")
 	}
-
-	w.muPl.Lock()
-	defer w.muPl.Unlock()
-	w.pipelineMap[id].task = t
+	pl.task = t
 
 	w.logger.Info("Pipeline updated", "name", pl.Name, "id", id)
 	return nil
 }
 func (w *Workflow) UpdatePipelineByName(name string, t Tasker) error {
-	w.muPl.RLock()
+	w.muPl.Lock()
+	defer w.muPl.Unlock()
 	id, exists := w.pipelineMapWithName[name]
-	w.muPl.RUnlock()
 	if !exists {
 		w.logger.Warn("UpdatePipelineByName failed: pipeline not found", "name", name)
 		return errors.New("pipeline not found")
 	}
-
-	w.muPl.Lock()
-	defer w.muPl.Unlock()
 	w.pipelineMap[id].task = t
 
 	w.logger.Info("Pipeline updated", "name", name, "id", id)
@@ -186,36 +171,45 @@ func (w *Workflow) ListPipelines() []*Pipeline {
 	return pipelines
 }
 
-func (w *Workflow) LaunchPipeline(id string, ctx interface{}) error {
+// LaunchPipeline 将 pipeline 实例化为一次 Job 并投入调度队列。
+// ctx 为调用方序列化的请求参数（json.RawMessage），可传 nil。
+// 返回 jobID 供后续查询，以及错误信息。
+func (w *Workflow) LaunchPipeline(id string, ctx json.RawMessage) (string, error) {
 	w.muPl.RLock()
 	pl, exists := w.pipelineMap[id]
+	var plInstance Pipeline
+	if exists {
+		// 在持锁期间完成解引用，避免锁释放后并发 UpdatePipeline 修改 *pl 引发数据竞争。
+		plInstance = *pl
+	}
 	w.muPl.RUnlock()
 	if !exists {
 		w.logger.Warn("LaunchPipeline failed: pipeline not found", "id", id)
-		return errors.New("pipeline not found")
+		return "", errors.New("pipeline not found")
 	}
 
-	plInstance := *pl
 	job := &Job{
-		ID:          generateID(pl.ID),
-		Pipeline:    plInstance,
-		ctx:         ctx,
-		description: "Job for pipeline " + pl.Name,
+		ID:       generateID(plInstance.ID),
+		Pipeline: plInstance,
+		ctx:      ctx,
 	}
 	job.record = record.NewRecord(job.ID, "", plInstance.task.StepsCount())
 
-	w.logger.Info("Launching pipeline", "pipeline", pl.Name, "jobID", job.ID)
+	w.logger.Info("Launching pipeline", "pipeline", plInstance.Name, "jobID", job.ID)
 
+	if w.isClosed.Load() {
+		w.logger.Error("LaunchPipeline failed: workflow is closed", "pipeline", plInstance.Name)
+		return "", errors.New("workflow is closed")
+	}
 	select {
 	case w.JobCh <- job:
 		w.logger.Debug("Job queued successfully", "jobID", job.ID)
-		return nil
+		return job.ID, nil
 	default:
 		w.logger.Error("LaunchPipeline failed: job channel is full",
-			"pipeline", pl.Name, "jobID", job.ID)
-		return errors.New("job channel is full")
+			"pipeline", plInstance.Name, "jobID", job.ID)
+		return "", errors.New("job channel is full")
 	}
-
 }
 
 // 管理回调, 解析任务, 调用任务的AsyncHandler
@@ -247,6 +241,10 @@ func (w *Workflow) CallbackHandler(id string, resp interface{}) error {
 
 	w.logger.Info("Callback received", "callbackID", id, "jobID", jobID)
 
+	if w.isClosed.Load() {
+		w.logger.Error("CallbackHandler failed: workflow is closed", "callbackID", id)
+		return errors.New("workflow is closed")
+	}
 	select {
 	case w.AsyncCh <- asyncJob:
 		w.logger.Debug("Async callback queued", "callbackID", id)
